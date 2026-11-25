@@ -6,9 +6,11 @@ and a night mode where each lamp can be switched on and off (with colour tempera
 
 ## Requirements
 
-- Node.js 18 or later (20 recommended, see `.nvmrc`)
+- Node.js 26 LTS (see `.nvmrc`; run `nvm use` if you use `nvm`) — or [Bun](https://bun.sh/)
 
 ## Commands
+
+With **npm** (Node.js):
 
 ```bash
 npm install        # install dependencies (once)
@@ -16,6 +18,18 @@ npm run dev        # local development at http://localhost:5173, with live reloa
 npm run build      # production build into dist/
 npm run preview    # serve the dist/ build at http://localhost:4173, to check it
 ```
+
+With **Bun**:
+
+```bash
+bun install              # install dependencies (once)
+bun run dev              # local development (Bun script runner + Node)
+bun --bun run dev        # local development running Vite on the Bun runtime
+bun --bun run build      # production build into dist/ using the Bun runtime
+bun --bun run preview    # serve the dist/ build at http://localhost:4173
+```
+
+No separate build step is needed for 3D models or shaders: geometry is generated procedurally in `src/main.js` and GLSL shaders are compiled by WebGL in the browser at runtime.
 
 ## Structure
 

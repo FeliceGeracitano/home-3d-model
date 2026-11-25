@@ -49,7 +49,6 @@
           <input type="range" id="ld" min="0" max="100" step="5" value="100" aria-label="Intensità di tutte le luci"></label>
         <label class="sunrow" id="sun-row" for="sun"><span>Sole · <b id="sun-lbl">ore 10</b></span>
           <input type="range" id="sun" min="0" max="100" value="30" aria-label="Posizione del sole"></label>
-        <button id="photo-btn" class="photo-btn">Foto realistica</button>
       </section>
       <section>
         <h2>Generale</h2>
@@ -80,11 +79,6 @@
         <details class="room" data-room="pranzo"><summary>Zona pranzo <span class="rsum" id="rsum-pranzo"></span></summary><div class="fsel" id="room-pranzo"></div></details>
         <details class="room" data-room="cucina"><summary>Cucina <span class="rsum" id="rsum-cucina"></span></summary><div class="fsel" id="room-cucina"></div></details>
         <details class="room" data-room="cam1"><summary>Camera 1 <span class="rsum" id="rsum-cam1"></span></summary><div class="fsel" id="room-cam1"></div></details>
-        <details class="room" data-room="cam2"><summary>Camera 2 <span class="rsum" id="rsum-cam2"></span></summary><div class="fsel" id="room-cam2">
-          <label>Porta<select id="d7type">
-            <option value="mirror">A specchio · si apre verso il soggiorno</option>
-            <option value="flush">Rasomuro · si apre verso la camera</option>
-          </select></label></div></details>
       </section>
       <details id="checks">
         <summary>Verifica superfici <span id="chk-sum" class="chip">–</span></summary>
@@ -99,10 +93,9 @@
   </aside>
 
   <div id="info" class="info" hidden></div>
-  <div id="walkhint" class="walkhint" hidden><span id="walktext">W A S D per muoverti · mouse per guardarti intorno · rotella per la visuale · tasto destro per misurare · tasto sinistro sulle porte per aprirle o chiuderle e, di notte, sulle lampade per accenderle o spegnerle (o per annullare la misura) · F foto realistica · Esc per mettere in pausa</span><button id="walk-photo" hidden>Foto</button><button id="walk-measure" hidden>Misura</button><button id="walk-clear" hidden>Annulla misura</button><button id="walk-exit" hidden>Esci</button></div>
+  <div id="walkhint" class="walkhint" hidden><span id="walktext">W A S D per muoverti · mouse per guardarti intorno · rotella per la visuale · tasto destro per misurare · tasto sinistro sulle porte per aprirle o chiuderle e, di notte, sulle lampade per accenderle o spegnerle (o per annullare la misura) · Esc per mettere in pausa</span><button id="walk-measure" hidden>Misura</button><button id="walk-clear" hidden>Annulla misura</button><button id="walk-exit" hidden>Esci</button></div>
   <div id="pausehint" class="walkhint" hidden>In pausa · clicca sulla scena per riprendere</div>
   <div id="mread" class="mread" hidden></div>
-  <div id="photobar" class="photobar" hidden role="status"><span id="photomsg">Preparo la scena…</span><span class="bar"><i id="photoprog"></i></span><span class="exp" role="group" aria-label="Luminosità"><button id="exp-dn" class="ghost" aria-label="Più scura">−</button><span>Luce</span><button id="exp-up" class="ghost" aria-label="Più chiara">+</button></span><button id="photo-close">Chiudi</button></div>
   <div id="joy" class="joy" hidden><i id="joyknob"></i></div>
   <div id="cross" class="crosshair" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>

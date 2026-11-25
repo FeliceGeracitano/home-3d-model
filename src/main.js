@@ -93,7 +93,7 @@ const PLAN = {
     { id:'D1', hinge:[354,73.4],   w:80,   closed:[0,1],  open:[-1,0] },
     { id:'D2', hinge:[354,517.5],  w:80,   closed:[0,-1], open:[-1,0] },
     // D5 (hallway ↔ kitchen) removed: open passage, no door leaf
-    { id:'D7', hinge:[1042,285.4], w:80,   closed:[-1,0], open:[0,1] },   // bedroom 2: two versions, see door7()
+    { id:'D7', hinge:[1042,285.4], w:80,   closed:[-1,0], open:[0,1], h:222, z0:10, mirror:true, gold:true },   // bedroom 2: full-height mirror on the living face, pulls open into the living room
     { id:'F1', hinge:[577.5,909],  w:113,  closed:[1,0],  open:[0,-1], h:230, classic:true },   // front door: one classic brown leaf, hinged on the right (seen from inside), opens inward
   ],
 
@@ -220,7 +220,7 @@ const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 const IS_MOBILE = matchMedia('(pointer: coarse)').matches || innerWidth < 640;
 // Quality: 'Alta' = ambient occlusion + sun entering through the windows (default on desktop)
-let HQ = !IS_MOBILE, SUN_T = .3, INSIDE = false, photo = null, NIGHT = false;   // INSIDE: eye-level view (Cammina) → daylight only through the windows
+let HQ = !IS_MOBILE, SUN_T = .3, INSIDE = false, NIGHT = false;   // INSIDE: eye-level view (Cammina) → daylight only through the windows
 try { const q = JSON.parse(localStorage.getItem('irnerio-quality') || 'null'); if (q) { HQ = !!q.hq; SUN_T = +q.sun || .3; } } catch {}
 renderer.setPixelRatio(Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
@@ -696,7 +696,7 @@ function travertineTexture(rotate = true) {
 }
 /* ---- relief ----
    Surface relief is carried by normal maps made here from small height fields (lighter = higher): they light the same
-   from every distance and the photo mode reads them too, which it does not with bump maps. */
+   from every distance. */
 function reliefTex(src, like, strength, max = 1024) {
   let w = src.width, h = src.height;
   if (Math.max(w, h) > max) { const k = max / Math.max(w, h), c0 = document.createElement('canvas'); c0.width = w = Math.round(w * k); c0.height = h = Math.round(h * k); c0.getContext('2d').drawImage(src, 0, 0, w, h); src = c0; }
@@ -1099,7 +1099,7 @@ function updateGloss() {                                           // live only 
 }
 
 // Real mirrors. Each one is a live planar Reflector when the camera is near (it re-renders the scene, so it is switched
-// off from afar), a light stand-in surface from a distance, and a true metal mirror for the path-traced photo.
+// off from afar), a light stand-in surface from a distance, and a metal mirror used when capturing room reflections.
 const MIRROR_LIST = [];
 const mirrorPBR = new THREE.MeshStandardMaterial({ color:0xe4ebee, roughness:.03, metalness:1, envMapIntensity:1.1 });
 function addMirror(geo, place, parent, tag) {
@@ -1107,7 +1107,7 @@ function addMirror(geo, place, parent, tag) {
   const refl = new Reflector(geo, { clipBias:.001, textureWidth:res, textureHeight:Math.min(2048, Math.round(res * Math.max(.6, h / w))), color:0xc9cdcd, multisample:HQ ? 4 : 0 });
   const far = new THREE.Mesh(geo, M.mirror), pbr = new THREE.Mesh(geo, mirrorPBR);
   for (const o of [refl, far, pbr]) { place(o); parent.add(o); }
-  refl.visible = false; pbr.visible = false;      // updateMirrors / the photo mode switch them each frame
+  refl.visible = false; pbr.visible = false;      // updateMirrors / RF switch them each frame
   MIRROR_LIST.push({ refl, far, pbr, tag });
 }
 function dropMirrors(tag) { for (let i = MIRROR_LIST.length - 1; i >= 0; i--) if (MIRROR_LIST[i].tag === tag) { MIRROR_LIST[i].refl.dispose(); MIRROR_LIST.splice(i, 1); } }
@@ -1679,19 +1679,7 @@ function buildFittings() {
   for (const r of b.rails) prism(r, 0, b.railH, M.rail, G.fittings, { edges:false });
 }
 
-// Bedroom 2 door (owner's two versions, both 2.10 clear above the bedroom's +22 floor, top at 2.32):
-//  mirror — leaf from the living floor (+10) so it also covers the step, full-height mirror on the living face,
-//           pulls open into the living room;
-//  flush  — 'rasomuro' leaf painted like the wall, flush with the living-side face, sits on the bedroom floor and
-//           pushes open into the room; a skirting board covers the 12 cm step riser below it.
-// Both with a slim brushed-gold minimalist lever.
-function door7() {
-  return CHOICE.door7 === 'flush'
-    ? { id:'D7', hinge:[1042,285.4], w:80, closed:[-1,0], open:[0,-1], h:210, z0:22, flush:true, paint:true, gold:true, riser:true }
-    : { id:'D7', hinge:[1042,285.4], w:80, closed:[-1,0], open:[0,1],  h:222, z0:10, mirror:true, gold:true };
-}
 const goldMat = new THREE.MeshStandardMaterial({ color:0xd2ad62, roughness:.28, metalness:1, envMapIntensity:1.3 });
-const doorMirrorMat = new THREE.MeshStandardMaterial({ color:0xe4ebee, roughness:.03, metalness:1, envMapIntensity:1.1 });
 let DOORS_OPEN = true;                       // menu default for every door; a click on a door overrides it for that one
 const DOOR_OPEN = {};                        // per-door state: id → open?
 const doorOpen = id => DOOR_OPEN[id] ?? DOORS_OPEN;
@@ -1701,19 +1689,18 @@ function doorHit(id, poly, z0, z1) { const m = prism(poly, z0, z1, hitMat, doorH
 function buildDoors() {
   dropMirrors('doors');
   clear(G.doors); clear(doorHitG);
-  for (const d0 of PLAN.doors) {
-    const d = d0.id === 'D7' ? door7() : d0;
+  for (const d of PLAN.doors) {
     const [hx, hy] = d.hinge, [ox, oy] = d.open, [cx, cy] = d.closed, w = d.w, t = 4;
     const h = Math.min(d.h ?? PLAN.doorH, CUT);
-    // leaf modelled in its closed position; thickness sits on the far side of the swing (or flush on the push side)
-    const side = d.flush ? 1 : -1, nx = ox * side, ny = oy * side;
+    // leaf modelled in its closed position; thickness sits on the far side of the swing
+    const nx = -ox, ny = -oy;
     const ex = hx + cx * w, ey = hy + cy * w;
     const leaf = cx !== 0 ? R(Math.min(hx, ex), Math.max(hx, ex), Math.min(hy, hy + ny * t), Math.max(hy, hy + ny * t))
                           : R(Math.min(hx, hx + nx * t), Math.max(hx, hx + nx * t), Math.min(hy, ey), Math.max(hy, ey));
     const base = d.z0 ?? lvl(hx + ox * 20 + cx * w / 2, hy + oy * 20 + cy * w / 2);
     const pivot = new THREE.Group(), inner = new THREE.Group();
     pivot.position.set(wx(hx), base * S, wz(hy)); inner.position.set(-wx(hx), 0, -wz(hy)); pivot.add(inner); G.doors.add(pivot);
-    prism(leaf, 0, h, d.paint ? M.boiserie : d.classic ? M.doorBrown : M.door, inner, { edges: !d.paint && !d.classic });
+    prism(leaf, 0, h, d.classic ? M.doorBrown : M.door, inner, { edges: !d.classic });
     if (d.classic) {                                 // classic panelled leaf, both faces: stiles, rails, 4 raised fields in moulded frames
       const xa = Math.min(hx, ex), xb = Math.max(hx, ex), y0 = Math.min(hy, hy + ny * t), y1 = Math.max(hy, hy + ny * t);
       const st = 13, mu = 11, pw = (xb - xa - 2 * st - mu) / 2, rows = [[24, 88], [104, Math.min(h, 230) - 16]];
@@ -1733,15 +1720,6 @@ function buildDoors() {
     if (d.mirror) {                                  // full mirror on the living face, 1.5 cm white edge: a real planar reflection
       const x0m = Math.min(hx, ex) + 1.5, x1m = Math.max(hx, ex) - 1.5, f = hy + oy * .5;
       addMirror(new THREE.PlaneGeometry((x1m - x0m) * S, (h - 3) * S), m => { m.position.set(wx((x0m + x1m) / 2), h / 2 * S, wz(f)); if (oy < 0) m.rotation.y = Math.PI; }, inner, 'doors');
-    }
-    if (d.flush) {                                   // the hairline shadow gap that outlines a 'rasomuro' leaf in the wall
-      const xa = Math.min(hx, ex), xb = Math.max(hx, ex), yy = hy - oy * .2;
-      for (const r of [R(xa - .35, xa, Math.min(hy, yy), Math.max(hy, yy)), R(xb, xb + .35, Math.min(hy, yy), Math.max(hy, yy))]) prism(r, base, base + h + .35, M.slot, G.doors, { edges:false });
-      prism(R(xa - .35, xb + .35, Math.min(hy, yy), Math.max(hy, yy)), base + h, base + h + .35, M.slot, G.doors, { edges:false });
-    }
-    if (d.riser) {                                   // skirting over the step riser below the flush leaf (living side)
-      const L = lvl(hx + cx * w / 2, hy + 30);
-      prism(R(Math.min(hx, ex), Math.max(hx, ex), hy, hy + 1.2), L, base, M.boiserie, G.doors, { edges:false });
     }
     const hm = d.gold ? goldMat : d.classic ? brassMat : chrome, gold = !!d.gold;
     if (h > 110) {                                   // lever handles on both faces, 105 cm above the living-side floor, near the latch edge
@@ -1780,7 +1758,7 @@ function toggleDoor(id) {
   DOOR_OPEN[id] = !doorOpen(id);
   if (id[0] === 'S') buildDoors();               // pocket door: redraw
   else for (const p of G.doors.children) if (p.userData.door === id) {
-    const d = id === 'D7' ? door7() : PLAN.doors.find(x => x.id === id), a0 = Math.atan2(d.closed[1], d.closed[0]); let da = Math.atan2(d.open[1], d.open[0]) - a0;
+    const d = PLAN.doors.find(x => x.id === id), a0 = Math.atan2(d.closed[1], d.closed[0]); let da = Math.atan2(d.open[1], d.open[0]) - a0;
     if (da > Math.PI) da -= 2 * Math.PI; if (da < -Math.PI) da += 2 * Math.PI;
     p.userData.target = DOOR_OPEN[id] ? -da : 0;
   }
@@ -1978,8 +1956,6 @@ const FM = {
   pillowBeige: new THREE.MeshStandardMaterial({ color:0xd9d1c4, roughness:.92 }),
   pillowGrey: new THREE.MeshStandardMaterial({ color:0x8c8b86, roughness:.92 }),
   loreaChenille: new THREE.MeshPhysicalMaterial({ color:0x8a937d, roughness:.93, sheen:.8, sheenRoughness:.5, sheenColor:0xbcc2b2, bumpMap:wovenTex, bumpScale:.5 }),
-  bajonnaFab: new THREE.MeshPhysicalMaterial({ color:0x3a5040, roughness:.88, sheen:.85, sheenRoughness:.42, sheenColor:0x7f9483, bumpMap:wovenTex, bumpScale:.45 }),   // soft velvety polyester
-  bajonnaPipe: new THREE.MeshStandardMaterial({ color:0x2f3f32, roughness:.9 }),
   pipeWhite: new THREE.MeshStandardMaterial({ color:0xf6f4ef, roughness:.85 }),   // contrast piping
   kivik:  new THREE.MeshPhysicalMaterial({ color:0xc6b9a3, roughness:.98, sheen:.25, sheenRoughness:.8, sheenColor:0xe8e0d2, bumpMap:wovenTex, bumpScale:1.1 }),     // Tallmyra: nubby woven
   rug:    new THREE.MeshStandardMaterial({ color:0xd2c8b7, roughness:1, bumpMap:wovenTex, bumpScale:2 }),
@@ -2338,9 +2314,7 @@ function nervoxiChair(cx, cy, rotY) {
   }
   g.position.set(wx(cx), 0, wz(cy)); g.rotation.y = rotY; G.furniture.add(g);
 }
-// Kave Home Brisia wall light, brushed brass, 2 frosted glass balls Ø 15 (photo; Kave Home lists no overall size, so
-// the rest is scaled from the ball): Ø 12 back plate, a short S-arm out to a slim vertical rod (≈ 56 cm, Ø 1.4 cm)
-// standing 7 cm off the wall, one ball beside the rod above the plate (right), one lower down (left). Satin opal glass, lit.
+// Brushed brass material shared by wall lights (e.g. Westwing Atlanta bedside lamps)
 const brassBrushed = new THREE.MeshStandardMaterial({ color:0xc9a265, roughness:.34, metalness:1, envMapIntensity:1.3 });
 /* ---- the lamps of the flat, as things that give light at night (see NL) ----
    Every lamp is registered when it is built: which of its parts glow, where its bulbs are (the middle of the parts
@@ -2362,15 +2336,9 @@ function kelvinRGB(T) {
 function lampKind(key) {
   const omni = [1, 0, 0, 0];
   switch (key) {
-    case brisia: case brisiaArm: return { src:mt => mt === opalGlass, I:.02, lobe:omni, reach:8 };
-    case elna: return { src:mt => mt === elnaDiffuser, I:.032, lobe:[0, 0, 1, -.25], off:[0, -1.5, 1], reach:8 };   // lit ring under the brass shade: light goes down and out
     case atlantaLamp: return { src:mt => mt === opalGlass, I:.03, lobe:omni, reach:7 };
-    case shapesLamp: return { src:mt => mt === opalShapes, I:.03, lobe:omni, reach:8 };
-    case alinaLamp: return { src:mt => mt === alinaInner, I:.045, lobe:[.03, 1, 1, .66], reach:8 };                // open top and bottom: two cones
     case bayonaLamp: return { src:mt => mt === bayonaIn, I:.045, lobe:[.03, 1, 1, .45], reach:8 };
-    case 'candela': return { src:mt => mt === candelaGlass, I:.035, lobe:[.8, 0, .4, .3], reach:8 };                 // opal glass, open underneath
     case 'amora': return { src:mt => mt === bulbMat, I:.028, lobe:omni, reach:8 };
-    case 'deko': return { src:mt => mt.isMeshBasicMaterial, I:.025, lobe:omni, color:0xffbd6e, reach:8 };            // through amber glass
     case 'desk': return { src:mt => !!mt.emissive && mt.emissive.getHex() !== 0, I:.012, lobe:[.5, 0, .6, 0], reach:5 };
   }
   return null;
@@ -2382,7 +2350,7 @@ function lampReg(id, objs, k, list = LAMPS) {
     o.traverse(m => {
       if (!m.isMesh) return;
       const mt = m.material;
-      if (mt.map && mt.map === alinaWash) { L.wash.push(m); return; }          // the painted-on fan of light on the wall: by day only
+      if (mt.map && mt.map === bayonaWash) { L.wash.push(m); return; }          // the painted-on fan of light on the wall: by day only
       if (k.src(mt)) L.src.push(m);
       const basic = !!mt.isMeshBasicMaterial;
       if (basic || (mt.emissive && mt.emissiveIntensity > 0 && mt.emissive.getHex() !== 0)) {   // a part that glows: its own material, so it can go dark alone
@@ -2395,103 +2363,11 @@ function lampReg(id, objs, k, list = LAMPS) {
   return L;
 }
 const opalGlass = new THREE.MeshStandardMaterial({ color:0xfbf7ef, roughness:.5, emissive:0xffecc8, emissiveIntensity:.55 });
-function brisia(x, y, nx, ny, zc) {                         // (x, y) on the wall face, (nx, ny) into the room, zc = plate centre (cm)
-  const g = new THREE.Group(), add = (m, px, py, pz) => { m.position.set(px * S, py * S, pz * S); m.castShadow = true; g.add(m); return m; };
-  const plate = add(new THREE.Mesh(new THREE.CylinderGeometry(6 * S, 6 * S, 1.2 * S, 40), brassBrushed), 0, 0, .6); plate.rotation.x = Math.PI / 2;
-  for (const sy of [1, -1]) {                               // S-arms from the plate out to the rod, up and down
-    const c = new THREE.CubicBezierCurve3(new THREE.Vector3(0, 0, 1.2 * S), new THREE.Vector3(0, sy * 1.5 * S, 6 * S), new THREE.Vector3(0, sy * 3 * S, 7 * S), new THREE.Vector3(0, sy * 7 * S, 7 * S));
-    add(new THREE.Mesh(new THREE.TubeGeometry(c, 24, .6 * S, 10, false), brassBrushed), 0, 0, 0);
-  }
-  add(new THREE.Mesh(new THREE.CylinderGeometry(.7 * S, .7 * S, 56 * S, 16), brassBrushed), 0, -4, 7);          // rod, 24 above → 32 below
-  for (const [bx, by] of [[8.3, 14], [-8.3, -24]]) {
-    const neck = add(new THREE.Mesh(new THREE.CylinderGeometry(1.4 * S, 1.4 * S, 2 * S, 16), brassBrushed), Math.sign(bx) * 1.5, by, 7); neck.rotation.z = Math.PI / 2;
-    const ball = add(new THREE.Mesh(new THREE.SphereGeometry(7.5 * S, 40, 24), opalGlass), bx, by, 7); ball.castShadow = false;
-  }
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
-}
-// Kave Home Brisia with arms and 1 frosted glass ball Ø 15 (catalogue: 23 out from the wall × 15 wide × h 24.5): small
-// Ø 10 back plate at the bottom, two slim parallel brass arms running out from it and curving up, a short neck and the
-// opal ball on top, its centre 15 cm off the wall and 12 cm above the plate.
-function brisiaArm(x, y, nx, ny, zc) {
-  const g = new THREE.Group(), add = (m, px, py, pz) => { m.position.set(px * S, py * S, pz * S); m.castShadow = true; g.add(m); return m; };
-  const plate = add(new THREE.Mesh(new THREE.CylinderGeometry(5 * S, 5 * S, 1.2 * S, 40), brassBrushed), 0, 0, .6); plate.rotation.x = Math.PI / 2;
-  for (const ax of [-1.1, 1.1]) {
-    const c = new THREE.CubicBezierCurve3(new THREE.Vector3(ax * S, 0, 1.2 * S), new THREE.Vector3(ax * S, 0, 11 * S), new THREE.Vector3(ax * S, 0, 15 * S), new THREE.Vector3(ax * S, 3.6 * S, 15 * S));
-    add(new THREE.Mesh(new THREE.TubeGeometry(c, 24, .45 * S, 10, false), brassBrushed), 0, 0, 0);
-  }
-  add(new THREE.Mesh(new THREE.CylinderGeometry(1.8 * S, 1.6 * S, 1.6 * S, 24), brassBrushed), 0, 4.2, 15);   // neck / socket cup
-  const ball = add(new THREE.Mesh(new THREE.SphereGeometry(7.5 * S, 40, 24), opalGlass), 0, 12, 15); ball.castShadow = false;
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
-}
-// Westwing Elna LED wall light, polished brass (catalogue: 25 wide × 13 out × h 8; body 11 × 5 × h 8, shade 25 × 13 × h 3;
-// LED 7 W, 2700 K, 321 lm). A half column with fine vertical ribs (millerighe) against the wall, and a flat half-disc shade
-// on top of it, 3 cm thick with a softly rounded edge; the light comes from the underside of the disc, round the column,
-// and washes down over the ribs and the wall.
-const brassPolished = new THREE.MeshStandardMaterial({ color:0xd8b36c, roughness:.16, metalness:1, envMapIntensity:1.5 });
-const elnaDiffuser = new THREE.MeshStandardMaterial({ color:0xfff8ec, roughness:.6, emissive:0xffd9a0, emissiveIntensity:1.6, side:THREE.DoubleSide });
-const elnaGeo = (() => {
-  // column: rippled half circle in plan (x across the wall, y out from it), 22 ribs, extruded 8 cm and stood upright
-  const R0 = 5.5, ribs = 22, n = 220, col = new THREE.Shape();
-  col.moveTo(-R0 * S, 0);
-  for (let i = 0; i <= n; i++) {
-    const t = Math.PI * (1 - i / n), r = R0 - .28 * (1 - Math.abs(Math.cos(ribs * t / 2 * 2)));   // rounded ribs, flat-ish crests
-    col.lineTo(Math.cos(t) * r * S, Math.sin(t) * r * S);
-  }
-  col.closePath();
-  const body = new THREE.ExtrudeGeometry(col, { depth:5.6 * S, bevelEnabled:false, curveSegments:1 });
-  body.rotateX(Math.PI / 2); body.translate(0, 5.6 * S, 0);           // y 0…5.6, shape y → out of the wall (+z)
-  body.computeVertexNormals();
-  // shade: half disc Ø 25, 3 thick, edge rounded with a 1 cm bevel
-  const R1 = 12.5, b = 1, disc = new THREE.Shape();
-  disc.moveTo(-(R1 - b) * S, 0); disc.absarc(0, 0, (R1 - b) * S, Math.PI, 0, true); disc.lineTo(-(R1 - b) * S, 0);
-  const shade = new THREE.ExtrudeGeometry(disc, { depth:(3 - 2 * b) * S, bevelEnabled:true, bevelThickness:b * S, bevelSize:b * S, bevelSegments:5, curveSegments:48 });
-  shade.rotateX(Math.PI / 2); shade.translate(0, (8 - b) * S, 0);   // y 5…8
-  // glowing ring on the underside, between the column and the rim
-  const ring = new THREE.RingGeometry(R0 * S + .002, (R1 - 1.4) * S, 48, 1, 0, Math.PI);
-  ring.rotateX(Math.PI / 2); ring.translate(0, 4.98 * S, 0);
-  return { body, shade, ring };
-})();
-function elna(x, y, nx, ny, zc) {                           // (x, y) on the wall face, (nx, ny) into the room, zc = light centre (cm)
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(elnaGeo.body, brassPolished), shade = new THREE.Mesh(elnaGeo.shade, brassPolished), ring = new THREE.Mesh(elnaGeo.ring, elnaDiffuser);
-  body.castShadow = shade.castShadow = true; body.receiveShadow = shade.receiveShadow = true;
-  g.add(body, shade, ring);
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc - 4) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
-}
-// Design For The People Shapes wall light, by Maria Berntsen (catalogue: 26 wide × h 26 × 22 out; mouth-blown opal glass,
-// mirror-polished brass, 1 × E14). A small round brass back plate, a short straight brass arm and a soft, lopsided opal
-// glass shade like a pebble, each one a little different; lit from inside, a warm diffuse glow.
-const opalShapes = new THREE.MeshPhysicalMaterial({ color:0xfbf8f2, roughness:.38, clearcoat:.6, clearcoatRoughness:.2, emissive:0xffe2b8, emissiveIntensity:.65 });
-const shapesGlass = (() => {
-  const g = new THREE.SphereGeometry(1, 72, 48), P = g.attributes.position, v = new THREE.Vector3();
-  for (let i = 0; i < P.count; i++) {
-    v.fromBufferAttribute(P, i);
-    // lopsided pebble: wider at the bottom and to one side, softly flattened toward the wall, a gentle dimple on top
-    const k = 1 + .2 * v.x * (1 - v.y) * .5 - .12 * v.y + .08 * Math.sin(2.1 * v.x + 1.3 * v.z + .4) - .1 * Math.max(0, v.y - .5) * (1 - Math.abs(v.x)) + .07 * Math.max(0, -v.y) * v.z;
-    P.setXYZ(i, v.x * k * 12.6 * S, v.y * k * 11.4 * S, v.z * k * 9.6 * S);
-  }
-  g.computeVertexNormals(); return g;
-})();
-function shapesLamp(x, y, nx, ny, zc) {
-  const g = new THREE.Group(), add = (m, px, py, pz) => { m.position.set(px * S, py * S, pz * S); m.castShadow = true; m.receiveShadow = true; g.add(m); return m; };
-  const plate = add(new THREE.Mesh(new THREE.CylinderGeometry(5 * S, 5 * S, 1.2 * S, 48), brassPolished), 0, 0, .6); plate.rotation.x = Math.PI / 2;
-  const arm = add(new THREE.Mesh(new THREE.CylinderGeometry(.9 * S, .9 * S, 5 * S, 20), brassPolished), 0, 0, 3.6); arm.rotation.x = Math.PI / 2;
-  const collar = add(new THREE.Mesh(new THREE.CylinderGeometry(2.4 * S, 2.6 * S, 2.2 * S, 32), brassPolished), 0, 0, 6.8); collar.rotation.x = Math.PI / 2;
-  const glass = add(new THREE.Mesh(shapesGlass, opalShapes), 1, -1, 16.6); glass.castShadow = false;
-  glass.rotation.set(-.12, .25, 0);
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
-}
-// Westwing Alina wall light (sold as "Hilko"; catalogue: 19 wide × 10 out × h 25, 1 × E27, up and down light; white,
-// fluted). A D-shaped shell open at the top and the bottom, its curved front finely fluted (about 60 narrow ribs), matt
-// white like plaster, about 1 cm thick; the bulb inside lights the inner face and throws a soft fan of light up the wall
-// and another down it, brightest at the shell's edge and fading within a hand's breadth or two.
-const alinaMat = new THREE.MeshStandardMaterial({ color:0xf3f1ec, roughness:.9 });
-const alinaInner = new THREE.MeshStandardMaterial({ color:0xfbf7f0, roughness:.8, emissive:0xffdcae, emissiveIntensity:.55, side:THREE.DoubleSide });
-const alinaWash = (() => {                                   // the fan of light on the wall: bright at the shell's edge, fading up (or down)
+// Maisons du Monde Bayona Pro wall light, gold (catalogue: 165 × 80 × 102 mm; from the photos: 16.5 wide, h 8, 10 out).
+// A band of thin brushed brass bent into a rounded oval (stadium) and open top and bottom, held a little off the wall by
+// a small square brass block; the bulb inside makes the inside of the band glow gold and throws a wide fan of warm light
+// up the wall and another down it.
+const bayonaWash = (() => {                                   // the fan of light on the wall: bright at the shell's edge, fading up (or down)
   const c = document.createElement('canvas'); c.width = 128; c.height = 128; const g = c.getContext('2d'), img = g.createImageData(128, 128);
   for (let j = 0; j < 128; j++) for (let i = 0; i < 128; i++) {
     const u = (i + .5) / 64 - 1, v = 1 - (j + .5) / 128, w = .62 + .55 * v;                // v: 0 at the shell, 1 at the far end; the fan widens
@@ -2500,45 +2376,9 @@ const alinaWash = (() => {                                   // the fan of light
   }
   g.putImageData(img, 0, 0); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 })();
-const alinaWashMat = new THREE.MeshBasicMaterial({ map:alinaWash, transparent:true, opacity:.5, depthWrite:false, blending:THREE.AdditiveBlending, polygonOffset:true, polygonOffsetFactor:-2 });
-const alinaGeo = (() => {
-  const W = 9.5, D = 10, T = 1, H = 25, N = 240, ribs = 60;
-  const pt = (t, a, b) => { const c = Math.cos(t), s = Math.sin(t); return [Math.sign(c) * Math.pow(Math.abs(c), .75) * a, Math.pow(s, .8) * b]; };   // a fuller D than an ellipse
-  const shape = new THREE.Shape(), inner = [];
-  for (let i = 0; i <= N; i++) {                             // outer face, wall to wall, with rounded ribs
-    const t = Math.PI * (1 - i / N), [x, y] = pt(t, W, D), rib = .16 * Math.pow(Math.abs(Math.sin(ribs * Math.PI * i / N)), .6);
-    const len = Math.hypot(x / W, y / D) || 1, k = 1 - rib / (Math.hypot(x, y) || 1) * (i > 2 && i < N - 2 ? 1 : 0);
-    if (i === 0) shape.moveTo(x * k * S, y * k * S); else shape.lineTo(x * k * S, y * k * S);
-  }
-  for (let i = N; i >= 0; i -= 4) { const t = Math.PI * (1 - i / N), [x, y] = pt(t, W - T, D - T); inner.push([x, y]); shape.lineTo(x * S, y * S); }
-  shape.closePath();
-  const shell = new THREE.ExtrudeGeometry(shape, { depth:H * S, bevelEnabled:false, curveSegments:1 });
-  shell.rotateX(Math.PI / 2); shell.translate(0, H / 2 * S, 0); shell.computeVertexNormals();
-  const pos = [], idx = [];                                  // the lit inner face, a hair inside the shell
-  inner.forEach(([x, y], i) => { const k = .985; pos.push(x * k * S, -H / 2 * S, y * k * S, x * k * S, H / 2 * S, y * k * S); if (i) { const a = (i - 1) * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); } });
-  const lit = new THREE.BufferGeometry(); lit.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); lit.setIndex(idx); lit.computeVertexNormals();
-  return { shell, lit, H };
-})();
-function alinaLamp(x, y, nx, ny, zc) {                      // (x, y) on the wall face, (nx, ny) into the room, zc = centre height (cm)
-  const g = new THREE.Group();
-  const shell = new THREE.Mesh(alinaGeo.shell, alinaMat); shell.castShadow = shell.receiveShadow = true;
-  const lit = new THREE.Mesh(alinaGeo.lit, alinaInner);
-  g.add(shell, lit);
-  for (const sgn of [1, -1]) {                               // light fans on the wall above and below
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(44 * S, 46 * S), alinaWashMat);
-    w.position.set(0, sgn * (alinaGeo.H / 2 + 23) * S, .15 * S); if (sgn < 0) w.rotation.z = Math.PI;
-    w.raycast = () => {}; w.renderOrder = 3; g.add(w);
-  }
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
-}
-// Maisons du Monde Bayona Pro wall light, gold (catalogue: 165 × 80 × 102 mm; from the photos: 16.5 wide, h 8, 10 out).
-// A band of thin brushed brass bent into a rounded oval (stadium) and open top and bottom, held a little off the wall by
-// a small square brass block; the bulb inside makes the inside of the band glow gold and throws a wide fan of warm light
-// up the wall and another down it.
 const bayonaOut = new THREE.MeshStandardMaterial({ color:0xc9a35f, roughness:.3, metalness:1, envMapIntensity:1.4 });
 const bayonaIn = new THREE.MeshStandardMaterial({ color:0xc9a35f, roughness:.32, metalness:.85, emissive:0xe0952c, emissiveIntensity:.55, side:THREE.DoubleSide });
-const bayonaWashMat = new THREE.MeshBasicMaterial({ map:alinaWash, color:0xffd69a, transparent:true, opacity:.6, depthWrite:false, blending:THREE.AdditiveBlending, polygonOffset:true, polygonOffsetFactor:-2 });
+const bayonaWashMat = new THREE.MeshBasicMaterial({ map:bayonaWash, color:0xffd69a, transparent:true, opacity:.6, depthWrite:false, blending:THREE.AdditiveBlending, polygonOffset:true, polygonOffsetFactor:-2 });
 const bayonaGeo = (() => {
   const W = 16.5, D = 8.6, H = 8, T = .18, back = 1.4;          // band 16.5 × 8.6 in plan, 8 tall, 1.8 mm sheet; 1.4 cm off the wall
   const stadium = (w, d, P) => { const r = d / 2, x = w / 2 - r, c = back + D / 2;
@@ -2580,7 +2420,7 @@ function atlantaLamp(x, y, nx, ny, zc) {                    // (x, y) on the wal
   const L = lvl(x + nx * 20, y + ny * 20);
   g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
 }
-function livingWallLights(make = brisia) {   // positions and height from the owner's electrical plan (points at h 250)
+function livingWallLights(make = bayonaLamp) {   // positions and height from the owner's electrical plan (points at h 250)
   const H = 250;
   [[791, 863, 0, -1],                  // south wall, between the TV and the entrance
    [1042, 508.5, -1, 0],               // west face of the chimney column (y 488…529), centred on it, above the sofa end
@@ -2589,16 +2429,11 @@ function livingWallLights(make = brisia) {   // positions and height from the ow
     const k = lampKind(make); if (k) lampReg('wall' + i, G.furniture.children.slice(n0), k);
   });
 }
-// Sklum Lorea storage bed (catalogue: 160 × 200 mattress → 176 × 216 × h 97, feet 2 cm; the 180 version is the same
-// frame 20 cm wider → 196 × 216). Headboard against bedroom 1's east wall (x 354), centred between the two doors.
+// Sklum Lorea storage bed (catalogue: 160 × 200 mattress → 176 × 216 × h 97, feet 2 cm).
+// Headboard against bedroom 1's east wall (x 354), centred between the two doors.
 // Chunky padded headboard and a deep upholstered lift-up storage base with softly rounded edges, chenille cover.
 const BED_COLORS = [
   ['salvia','Ciniglia verde salvia','#75806a'], ['biancoSporco','Ciniglia bianco sporco','#e4ddd0'], ['granoBoucle','Bouclé marrone grano','#a2876a'],
-];
-// Beliani Bajonna's own range (160 × 200 storage versions on beliani.it); the dark-green fabric is the one being considered
-const BAJONNA_COLORS = [
-  ['bjVerdeScuro','Tessuto verde scuro','#3a5040'], ['bjBeigeChiaro','Tessuto beige chiaro','#d8cebd'],
-  ['bjGrigioChiaro','Tessuto grigio chiaro','#b5b4ae'], ['bjMenta','Velluto verde menta','#a3bba6'],
 ];
 // Bedroom 1 — paint for the wall behind the bed only, grouped by palette (screen colours, indicative)
 const BEDWALL_GROUPS = [
@@ -2696,67 +2531,6 @@ function bedLorea(mat) {
   }
   g.position.set(wx(hb), 0, wz(cy)); g.rotation.y = -Math.PI / 2; G.furniture.add(g);
 }
-// Beliani Bajonna storage bed, tessuto verde scuro (beliani.it art. 340777-603284): 160 × 200 mattress → 184 × 235 × h 102,
-// headboard 184 × 102, storage well 160 × 200 × 27, mattress sits 6 cm down inside the frame (shop photos: 20 cm mattress).
-// Tall padded headboard panel dressed with two big loose cushions (removable covers, included); a wide upholstered
-// surround (12 cm side rails, 10.5 cm foot) round the gas-lift well, softly rounded edges, low hidden glides.
-// Same spot as the Lorea: headboard against bedroom 1's east wall (x 354), centred between the two doors.
-function bedBajonna(mat = 160) {
-  const cy = 295.5, hb = 354, W = mat + 24, L = 235, HB = 11, CU = 11, RIM = 37, GL = 1.5, F = FM.bajonnaFab;
-  const c = BAJONNA_COLORS.find(b => b[0] === CHOICE.bedColor) || BAJONNA_COLORS[0], velvet = c[1].startsWith('Velluto');
-  F.color.set(c[2]); F.sheenColor.set(c[2]).lerp(_white, velvet ? .5 : .35); F.sheen = velvet ? 1 : .85; F.roughness = velvet ? .8 : .88;
-  const PF = FM.bajonnaPipe; PF.color.set(c[2]).multiplyScalar(.86);
-  const g = new THREE.Group(), V = (x, y, z) => new THREE.Vector3(x * S, y * S, z * S);
-  const add = (geo, m, x, y, z, parent = g) => { const o = new THREE.Mesh(geo, m); o.position.set(x * S, y * S, z * S); o.castShadow = o.receiveShadow = true; parent.add(o); return o; };
-  // headboard: 11 cm padded panel, 1 cm off the floor to 102, softly crowned, a welt round its front edge
-  add(cushionGeo(W, 101, HB, 3, .4, .6), F, 0, 1 + 50.5, HB / 2);
-  piping([V(-W / 2 + .9, 2, HB - .9), V(-W / 2 + .9, 102 - .9, HB - .9), V(W / 2 - .9, 102 - .9, HB - .9), V(W / 2 - .9, 2, HB - .9)], PF, false, g);
-  // two loose back cushions, 86 × 54 × 11, hung side by side on the panel from just under the mattress top to 95
-  const cw = (W - 12) / 2, ch = 54, cyc = 68, cz = HB + .8 + CU / 2, k = 1.45;   // k: 45° point on a 5 cm rounded edge
-  for (const sx of [-1, 1]) {
-    const cg = new THREE.Group(); cg.position.set(sx * (cw / 2 + 1) * S, cyc * S, cz * S); cg.rotation.set(.006, 0, sx * .004); g.add(cg);
-    add(cushionGeo(cw, ch, CU, 5, .8, 2.2), F, 0, 0, 0, cg);
-    const hx = cw / 2 - k, hy = ch / 2 - k, fz = CU / 2 - k;
-    piping([V(-hx, -hy, fz), V(-hx, hy, fz), V(hx, hy, fz), V(hx, -hy, fz)], PF, true, cg);        // front welt
-    piping([V(-hx, hy, -fz), V(-hx, -hy, -fz), V(hx, -hy, -fz), V(hx, hy, -fz)], PF, true, cg);    // back welt
-  }
-  // base: one upholstered U round the mattress well, open at the head where it meets the cushions, extruded with a
-  // 3 cm rounded edge top and bottom (the shape is drawn 3 cm inside the finished outline; the bevel grows it back)
-  const bv = 3, z0 = HB + .8 + CU, zw0 = z0 + 1.5, zw1 = zw0 + 200, rc = 3;
-  const xo = W / 2 - bv, xi = mat / 2 + bv, za = z0 + bv, zf = L - bv, zi = zw1 + bv;
-  const pts = [[-xo, za], [-xo, zf - rc]];
-  const arc = (ccx, ccz, a0, a1) => { for (let i = 1; i <= 8; i++) { const a = a0 + (a1 - a0) * i / 8; pts.push([ccx + rc * Math.cos(a), ccz + rc * Math.sin(a)]); } };
-  arc(-xo + rc, zf - rc, Math.PI, Math.PI / 2); pts.push([xo - rc, zf]); arc(xo - rc, zf - rc, Math.PI / 2, 0);
-  pts.push([xo, za], [xi, za], [xi, zi], [-xi, zi], [-xi, za]);
-  const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(x * S, -z * S)));
-  const bg = new THREE.ExtrudeGeometry(sh, { depth:(RIM - GL - 2 * bv) * S, bevelEnabled:true, bevelThickness:bv * S, bevelSize:bv * S, bevelSegments:5, curveSegments:8 });
-  bg.rotateX(-Math.PI / 2);
-  add(bg, F, 0, GL + bv, 0);
-  const o = bv - bv * Math.SQRT1_2, wy = RIM - o, wx2 = W / 2 - o, rw = rc + bv - o, wpts = [V(-wx2, wy, z0 + 1)];   // welt on the outer top edge
-  for (let i = 0; i <= 8; i++) { const a = Math.PI - Math.PI / 2 * i / 8; wpts.push(V(-xo + rc + rw * Math.cos(a), wy, zf - rc + rw * Math.sin(a))); }
-  for (let i = 0; i <= 8; i++) { const a = Math.PI / 2 - Math.PI / 2 * i / 8; wpts.push(V(xo - rc + rw * Math.cos(a), wy, zf - rc + rw * Math.sin(a))); }
-  wpts.push(V(wx2, wy, z0 + 1));
-  piping(wpts, PF, false, g);
-  add(new THREE.BoxGeometry(mat * S, (36 - GL) * S, 1.5 * S), F, 0, (36 + GL) / 2, z0 + .75);         // head wall of the box, under the cushions
-  add(new THREE.BoxGeometry(mat * S, 1.2 * S, 200 * S), F, 0, RIM - 6 - .6, zw0 + 100);                // slatted deck (hidden)
-  for (const x of [-W / 2 + 6, W / 2 - 6]) for (const z of [z0 + 6, L - 6])
-    add(new THREE.CylinderGeometry(.016, .018, GL * S, 16), FM.metal, x, GL / 2, z);                    // glides
-  // mattress with a fitted sheet, 20 cm, sitting 6 cm down in the well
-  const mt = RIM - 6 + 20;
-  add(cushionGeo(mat - 1, 20, 199, 6, 1, 0), FM.fitted, 0, mt - 10, zw0 + 100);
-  // made up like the Lorea, so the two compare like for like: duvet over the rails, grey throw at the foot, four pillows
-  const top = mt + 1.6;
-  g.add(drape({ a:mat / 2, z0:zw0 + 57, z1:zw1 - 2, top, r:14.5, hangSide:30, hangFoot:30, puff:2.2, folds:.7, seed:1 }, FM.duvet));
-  const roll = add(new THREE.CapsuleGeometry(.035, (mat - 4) * S, 6, 20), FM.duvet, 0, top + .4, zw0 + 57);
-  roll.rotation.z = Math.PI / 2; roll.scale.set(1, 1, .8);
-  g.add(drape({ a:mat / 2, z0:zw0 + 110, z1:zw1 - 2, top:top + 2.8, r:18, hangSide:36, hangFoot:36, puff:0, folds:1.2, seed:4 }, FM.bedThrow));
-  const pw = Math.min(75, (mat - 8) / 2), cf = z0 + 2.2;                                                  // cf: front of the cushions
-  for (const sx of [-1, 1]) {
-    const b = add(pillowGeo(pw, 50, 20), FM.pillowBeige, sx * (pw / 2 + 2), mt + 15, cf + 22); b.rotation.x = .45;
-    const gp = add(pillowGeo(pw - 6, 46, 19), FM.pillowGrey, sx * (pw / 2 + 1), mt + 17, cf + 41); gp.rotation.x = .68; gp.rotation.z = -sx * .04;
-  }
-  g.position.set(wx(hb), 0, wz(cy)); g.rotation.y = -Math.PI / 2; G.furniture.add(g);
-}
 const CATALOG = {
   sofa:   { label:'Divano', options:[
     { id:'kivik',   name:'IKEA KIVIK · 3 posti · 228 × 95 × h 83',      build:sofaKivik,   colors:KIVIK_COLORS },
@@ -2772,12 +2546,9 @@ const CATALOG = {
   // Chairs are placed on the seat slots the chosen table returns: [x, table edge y, side]
   lamps:  { label:'Applique', options:[
     { id:'bayona',  name:'Maisons du Monde Bayona Pro · ottone spazzolato · 16,5 × 10 × h 8 · luce su e giù · 3 punti', build:() => livingWallLights(bayonaLamp) },
-    { id:'alina',   name:'Westwing Alina (Hilko) · bianco a coste · 19 × 10 × h 25 · luce su e giù · 3 punti', build:() => livingWallLights(alinaLamp) },
   ]},
   bed:    { label:'Letto camera 1', options:[
     { id:'lorea160', name:'Sklum Lorea · materasso 160 × 200 · 176 × 216 × h 97', build:() => bedLorea(160), colors:BED_COLORS },
-    { id:'lorea180', name:'Sklum Lorea · materasso 180 × 200 · 196 × 216 × h 97', build:() => bedLorea(180), colors:BED_COLORS },
-    { id:'bajonna160', name:'Beliani Bajonna · materasso 160 × 200 · 184 × 235 × h 102', build:() => bedBajonna(160), colors:BAJONNA_COLORS },
   ]},
   chairs: { label:'Sedie', options:[
     { id:'nervoxi', name:'Sklum Nervoxi · 57 × 60 × h 79', build:s => placeChairs(s, 24, nervoxiChair), colors:NERVOXI_COLORS },
@@ -2785,29 +2556,25 @@ const CATALOG = {
     { id:'none',        name:'Nessuna',               build:() => {} },
   ]},
   pendant: { label:'Lampadario', options:[
-    { id:'candela', name:'Westwing Candela · 3 vetri opalini a coste + ottone · 49 × 45', build:() => candelaPendant(887, 405, 327) },
     { id:'amora',   name:'Westwing Amora · 3 vetri champagne + ottone · 35 × 35',        build:() => amoraPendant(887, 405, 327) },
-    { id:'none',    name:'Nessuno',                                                       build:() => {} },
   ]},
 };
 function placeChairs(seats, off, draw) {
   for (const [x, edge, side] of seats || []) draw(x, edge + side * off, side < 0 ? Math.PI : 0, side);
 }
-const DEFAULT_CHOICE = { sofa:'kivik', sofaColor:'tallmyraFumo', coffee:'dolvenPouf', rugColor:'orig', dining:'tarsele150', chairs:'nervoxi', chairColor:'nTessutoBeige', gres:'viola', sink:'white', tap:'black', door7:'mirror', lamps:'bayona', pendant:'candela', bed:'lorea160', bedColor:'salvia', bedWall:'sabbia' };
+const DEFAULT_CHOICE = { sofa:'kivik', sofaColor:'tallmyraFumo', coffee:'dolvenPouf', rugColor:'orig', dining:'tarsele150', chairs:'nervoxi', chairColor:'nTessutoBeige', gres:'viola', sink:'white', tap:'black', lamps:'bayona', pendant:'amora', bed:'lorea160', bedColor:'salvia', bedWall:'sabbia' };
 const CHOICE = { ...DEFAULT_CHOICE };
 // restore the last selection on this device; any missing or no-longer-valid value falls back to the default
 try {
   const saved = JSON.parse(localStorage.getItem('irnerio-arredi') || '{}');
   for (const k of Object.keys(DEFAULT_CHOICE)) {
-    const ok = k === 'sofaColor' ? SOFA_COLORS.some(c => c[0] === saved[k]) : k === 'rugColor' ? RUG_COLORS.some(c => c[0] === saved[k]) : k === 'gres' ? GRES.some(g => g.id === saved[k]) : k === 'sink' ? SINK_FINISHES.some(c => c[0] === saved[k]) : k === 'tap' ? TAP_FINISHES.some(c => c[0] === saved[k]) : k === 'door7' ? ['mirror', 'flush'].includes(saved[k]) : k === 'bedColor' ? [...BED_COLORS, ...BAJONNA_COLORS].some(c => c[0] === saved[k]) : k === 'chairColor' ? [...OLEA_COLORS, ...NERVOXI_COLORS].some(c => c[0] === saved[k]) : k === 'bedWall' ? BEDWALL_COLORS.some(c => c[0] === saved[k]) : CATALOG[k]?.options.some(o => o.id === saved[k]);
+    const ok = k === 'sofaColor' ? SOFA_COLORS.some(c => c[0] === saved[k]) : k === 'rugColor' ? RUG_COLORS.some(c => c[0] === saved[k]) : k === 'gres' ? GRES.some(g => g.id === saved[k]) : k === 'sink' ? SINK_FINISHES.some(c => c[0] === saved[k]) : k === 'tap' ? TAP_FINISHES.some(c => c[0] === saved[k]) : k === 'bedColor' ? BED_COLORS.some(c => c[0] === saved[k]) : k === 'chairColor' ? [...OLEA_COLORS, ...NERVOXI_COLORS].some(c => c[0] === saved[k]) : k === 'bedWall' ? BEDWALL_COLORS.some(c => c[0] === saved[k]) : CATALOG[k]?.options.some(o => o.id === saved[k]);
     if (ok) CHOICE[k] = saved[k];
   }
 } catch {}
 const pickItem = slot => CATALOG[slot].options.find(o => o.id === CHOICE[slot]) || CATALOG[slot].options[0];
 // one-time: the KIVIK's default fabric became Tallmyra grigio fumo; move a beige that was only the old default over to it
 try { if (!localStorage.getItem('irnerio-kivik-fumo')) { if (CHOICE.sofaColor === 'tallmyraBeige') CHOICE.sofaColor = 'tallmyraFumo'; localStorage.setItem('irnerio-kivik-fumo', '1'); localStorage.setItem('irnerio-arredi', JSON.stringify(CHOICE)); } } catch {}
-// one-time: show the newly added Beliani Bajonna in dark green once; any later pick is remembered as usual
-try { if (!localStorage.getItem('irnerio-bajonna')) { CHOICE.bed = 'bajonna160'; CHOICE.bedColor = 'bjVerdeScuro'; localStorage.setItem('irnerio-bajonna', '1'); localStorage.setItem('irnerio-arredi', JSON.stringify(CHOICE)); } } catch {}
 { const pal = pickItem('bed').colors; if (pal && !pal.some(c => c[0] === CHOICE.bedColor)) CHOICE.bedColor = pal[0][0]; }   // fabric must belong to the chosen bed
 applyGres(); applyKitchenFinish(); applyBedWall();
 // Sheer linen curtains, drawn open beside each window (track just under the ceiling)
@@ -2832,43 +2599,6 @@ function rug(sofa) {
   applyRugColor();
   const x1 = Math.min(1058, sofa.cx + 115), x0 = x1 - 230, y0 = sofa.front - 25, y1 = Math.min(815, y0 + 165);
   const m = soft(x0, x1, y0, y1, 0, 1.2, FM.rug, .6); m.castShadow = false;
-}
-// Pendant over the dining table: linen drum on a thin cable, warm glow underneath
-function pendant(x, y, ceil) {
-  const g = new THREE.Group(); G.furniture.add(g);
-  const z = 175;                                         // shade height above the floor
-  const cable = new THREE.Mesh(new THREE.CylinderGeometry(.002, .002, (ceil - z) * S, 6), FM.metal); cable.position.set(wx(x), (z + (ceil - z) / 2) * S, wz(y)); g.add(cable);
-  const shade = new THREE.Mesh(new THREE.CylinderGeometry(.2, .23, .2, 48, 1, true), new THREE.MeshStandardMaterial({ color:0xefe7d8, roughness:1, side:THREE.DoubleSide, emissive:0xffd9a0, emissiveIntensity:.25 }));
-  shade.position.set(wx(x), z * S, wz(y)); g.add(shade);
-  const glow = new THREE.Mesh(new THREE.CircleGeometry(.2, 32), new THREE.MeshBasicMaterial({ color:0xfff1d6 })); glow.rotation.x = Math.PI / 2; glow.position.set(wx(x), (z - 9) * S, wz(y)); g.add(glow);
-  g.position.y -= lvl(x, y) * S;                         // the furniture lift adds the floor level back; keep the cable on the ceiling
-}
-// DekoArte 3-light pendant (Leroy Merlin 96400259): ribbed amber glass and brushed brass, 3 × E27, shades 47.5 cm tall
-// all together, 47.5 wide, up to 200 cm with the cable. Built as a cluster on a round brass canopy: three ribbed amber
-// globes on cables at staggered heights, each under a brass cap, a warm bulb glowing inside. Lowest about 75 cm over
-// the table top.
-const amberGlass = new THREE.MeshStandardMaterial({ color:0x6e4a10, roughness:.2, metalness:0, transparent:true, opacity:.86, emissive:0x9a6614, emissiveIntensity:.8, envMapIntensity:1.4 });
-const ribbedGlobe = (() => {
-  const g = new THREE.SphereGeometry(8, 64, 28), P = g.attributes.position;
-  for (let i = 0; i < P.count; i++) {
-    const x = P.getX(i), y = P.getY(i), z = P.getZ(i), k = 1 + .028 * Math.cos(28 * Math.atan2(z, x)) * Math.min(1, Math.hypot(x, z) / 5);
-    P.setXYZ(i, x * k * S, y * 1.15 * S, z * k * S);
-  }
-  g.computeVertexNormals(); return g;
-})();
-function dekoPendant(x, y, ceil) {
-  const g = new THREE.Group(); G.furniture.add(g);
-  const T = 87 + 75, add = (m, px, pz, py) => { m.position.set(wx(x + px), py * S, wz(y + pz)); g.add(m); return m; };
-  const can = add(new THREE.Mesh(new THREE.CylinderGeometry(6 * S, 6.5 * S, 3 * S, 40), brassBrushed), 0, 0, ceil - 1.5); can.castShadow = true;
-  const H = 8 * 1.15 * 2;                                // globe height ≈ 18.4
-  for (const [dx, dy, bottom] of [[-14, -6, T], [13, -7, T + 11], [0, 10, T + 24.5]]) {
-    const cy = bottom + H / 2, capTop = bottom + H + 4.6;
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.12 * S, .12 * S, (ceil - 3 - capTop) * S, 6), FM.metal), dx, dy, capTop + (ceil - 3 - capTop) / 2);   // cable
-    const cap = add(new THREE.Mesh(new THREE.CylinderGeometry(2.2 * S, 3.4 * S, 4.6 * S, 28), brassBrushed), dx, dy, bottom + H + 1.9); cap.castShadow = true;
-    const glass = add(new THREE.Mesh(ribbedGlobe, amberGlass), dx, dy, cy); glass.renderOrder = 2;
-    add(new THREE.Mesh(new THREE.SphereGeometry(3 * S, 20, 12), new THREE.MeshBasicMaterial({ color:0xffe2b4 })), dx, dy, cy);   // warm bulb
-  }
-  g.position.y -= lvl(x, y) * S;                         // the furniture lift adds the floor level back; keep the canopy on the ceiling
 }
 // Westwing Amora cluster pendant (catalogue: 35 × 35 × h 16 for the cluster, shades Ø 15 × h 16, canopy Ø 25 × h 3, up to
 // 150 cm long, 3 × E14; transparent champagne dented glass, brushed brass canopy, black fabric cables). Three oval shades
@@ -2904,50 +2634,6 @@ function amoraPendant(x, y, ceil) {
     const glass = add(new THREE.Mesh(amoraShade, champagneGlass), dx, dy, cy); glass.renderOrder = 2; glass.rotation.y = dx * .3;
     add(new THREE.Mesh(new THREE.SphereGeometry(2.3 * S, 20, 14), bulbMat), dx, dy, cy + 1.5);                       // E14 globe bulb
     add(new THREE.Mesh(new THREE.CylinderGeometry(.9 * S, 1.1 * S, 2.5 * S, 12), brassBrushed), dx, dy, cy + 4.6);   // its base in the socket
-  }
-  g.position.y -= lvl(x, y) * S;                             // the furniture lift adds the floor level back; keep the canopy on the ceiling
-}
-// Westwing Candela cluster pendant (catalogue: 49 × 45 overall, hangs 90…150 cm from the ceiling, cable 120, tallest
-// shade h 29; 3 × E27; opal white glass, black powder-coated canopy, brass-plated sockets; shapes and proportions from the
-// product photos). Three ribbed opal shades of different shapes — a tall lantern, a flat pumpkin and a short drum — each on
-// a black fabric cable with a slim brushed-brass socket tube and a collar where it meets the glass; open at the bottom,
-// where the bulb shows brighter. Round black canopy. Hung as in the photos: drum lowest, lantern a little higher,
-// pumpkin highest, at the most the catalogue allows (150 cm).
-const candelaGlass = new THREE.MeshPhysicalMaterial({ color:0xfbfaf6, roughness:.42, clearcoat:.35, clearcoatRoughness:.3, emissive:0xffe4bd, emissiveIntensity:.5 });
-const candelaInner = new THREE.MeshBasicMaterial({ color:0xfff1da, side:THREE.DoubleSide });
-const candelaBlack = new THREE.MeshStandardMaterial({ color:0x1b1b1b, roughness:.55, metalness:.2 });
-const brassSatin = new THREE.MeshStandardMaterial({ color:0xc2a062, roughness:.32, metalness:1, envMapIntensity:1.3 });
-function ribbedLathe(profile, ribs = 42, depth = .026) {   // profile: [radius, height] in cm, bottom → top
-  const g = new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r * S, y * S)), 128), P = g.attributes.position;
-  const rMax = Math.max(...profile.map(p => p[0]));
-  for (let i = 0; i < P.count; i++) {
-    const x = P.getX(i), z = P.getZ(i), r = Math.hypot(x, z); if (r < 1e-6) continue;
-    const t = Math.atan2(z, x), fade = Math.min(1, Math.max(0, (r / S - 2.2) / (rMax - 2.2)) * 1.6);   // ribs fade out toward the neck and the opening
-    const k = 1 - depth * fade * Math.pow(Math.abs(Math.sin(ribs * t / 2)), .7);                      // rounded pleats, narrow grooves
-    P.setX(i, x * k); P.setZ(i, z * k);
-  }
-  g.computeVertexNormals(); return g;
-}
-const CANDELA_SHADES = {
-  lantern:{ h:29, open:5, tube:8.5, geo:ribbedLathe([[5,0],[5.6,.3],[6.5,1.1],[7,2.6],[7,25.5],[6.6,27.4],[5.2,28.5],[2.2,29]]) },
-  pumpkin:{ h:9.5, open:4.6, tube:12.5, geo:ribbedLathe([[4.6,0],[5.4,.3],[7.6,1.2],[9.1,2.9],[9.6,4.6],[9.2,6.4],[7.6,8],[4.8,9.1],[2.2,9.5]], 48) },
-  drum:{ h:13, open:4.8, tube:8, geo:ribbedLathe([[4.8,0],[5.5,.3],[6.2,1.3],[6.5,2.8],[6.5,9.8],[6.1,11.6],[4.6,12.6],[2.2,13]]) },
-};
-function candelaPendant(x, y, ceil) {
-  const g = new THREE.Group(); G.furniture.add(g);
-  const add = (m, px, pz, py, cast = true) => { m.position.set(wx(x + px), py * S, wz(y + pz)); m.castShadow = cast; m.receiveShadow = true; g.add(m); return m; };
-  add(new THREE.Mesh(new THREE.CylinderGeometry(19 * S, 19 * S, 2.2 * S, 72), candelaBlack), 0, 0, ceil - 1.1);
-  // [shape, x, y (plan cm from the cluster centre), bottom of the glass (cm above the floor)]
-  for (const [k, dx, dy, bottom] of [['drum', 9, 9, ceil - 143.5], ['lantern', -12, 4, ceil - 138], ['pumpkin', 4, -11, ceil - 117]]) {
-    const sh = CANDELA_SHADES[k], top = bottom + sh.h, tubeTop = top + sh.tube + .6;
-    const len = ceil - 2.2 - tubeTop;
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.28 * S, .28 * S, len * S, 8), candelaBlack), dx, dy, tubeTop + len / 2, false);   // fabric cable
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.55 * S, .7 * S, .9 * S, 16), brassSatin), dx, dy, tubeTop - .2);                 // cable gland
-    add(new THREE.Mesh(new THREE.CylinderGeometry(1.45 * S, 1.45 * S, sh.tube * S, 32), brassSatin), dx, dy, top + .6 + sh.tube / 2);  // socket tube
-    add(new THREE.Mesh(new THREE.CylinderGeometry(2.5 * S, 2.6 * S, .9 * S, 40), brassSatin), dx, dy, top + .35);                    // collar on the glass
-    const glass = add(new THREE.Mesh(sh.geo, candelaGlass), dx, dy, bottom, false); glass.rotation.y = dx * .17;
-    const lit = add(new THREE.Mesh(new THREE.CircleGeometry(sh.open * .96 * S, 40), candelaInner), dx, dy, bottom + .5, false);    // the bright inside, seen through the opening
-    lit.rotation.x = Math.PI / 2;
   }
   g.position.y -= lvl(x, y) * S;                             // the furniture lift adds the floor level back; keep the canopy on the ceiling
 }
@@ -2987,7 +2673,7 @@ function buildFurnitureItems() {
   // Bedroom 1 bed: from the catalogue (Arredi → Letto)
   pickItem('bed').build();
   { // a Westwing Atlanta wall light each side of the bed, on the headboard wall, midway between the bed and the door next to it
-    const id = pickItem('bed').id, W = id === 'lorea180' ? 196 : id === 'bajonna160' ? 184 : 176, cy = 295.5;
+    const W = 176, cy = 295.5;
     [(153.4 + cy - W / 2) / 2, (437.5 + cy + W / 2) / 2].forEach((y, i) => {
       const n0 = G.furniture.children.length; atlantaLamp(354, y, -1, 0, 135);
       lampReg('bedside' + i, G.furniture.children.slice(n0), lampKind(atlantaLamp));
@@ -3087,7 +2773,6 @@ const plc = new PointerLockControls(persp, renderer.domElement);
 const wheelZoom = { log:0, ndc:new THREE.Vector2() };
 view.addEventListener('wheel', e => {
   if (mode !== 'iso' && mode !== 'top') return;           // Cammina keeps its own wheel (field of view)
-  if (typeof photo !== 'undefined' && photo) return;
   e.preventDefault(); e.stopPropagation();                // OrbitControls never sees the wheel
   let d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
   if (e.ctrlKey) d *= 4;                                  // trackpad pinch arrives as ctrl+wheel with tiny deltas
@@ -3159,18 +2844,18 @@ function startTouchWalk() {
   persp.rotation.set(pitch, yaw, 0);
   $('walktext').textContent = 'Pollice sinistro: muoviti · pollice destro: guardati intorno';
   if (innerWidth < 640) setCollapsed(true);
-  $('walk-exit').hidden = false; $('walk-measure').hidden = false; $('walk-photo').hidden = false; setVis('walkhint', true); setVis('cross', true); setLabels(false); setHover(null); syncButtons();
+  $('walk-exit').hidden = false; $('walk-measure').hidden = false; setVis('walkhint', true); setVis('cross', true); setLabels(false); setHover(null); syncButtons();
 }
 function endTouchWalk() {
   if (!touchWalk) return;
   touchWalk = false; joy.id = look.id = null; joy.dx = joy.dy = 0;
-  persp.rotation.order = 'XYZ'; setVis('walkhint', false); setVis('joy', false); setVis('cross', false); $('walk-measure').hidden = true; $('walk-photo').hidden = true; measureReset();
+  persp.rotation.order = 'XYZ'; setVis('walkhint', false); setVis('joy', false); setVis('cross', false); $('walk-measure').hidden = true; measureReset();
   setLabels($('t-labels').checked);
 }
 {
   const el = renderer.domElement;
   el.addEventListener('pointerdown', e => {
-    if (!touchWalk || photo) return;
+    if (!touchWalk) return;
     const b = el.getBoundingClientRect();
     if (e.clientX - b.left < b.width / 2 && joy.id === null) {
       Object.assign(joy, { id:e.pointerId, x0:e.clientX, y0:e.clientY, dx:0, dy:0 });
@@ -3281,11 +2966,10 @@ function walkFailed() {
 document.addEventListener('pointerlockerror', walkFailed);
 plc.addEventListener('lock', () => { resumeTry = false; mode = 'walk'; setVis('pausehint', false); setVis('walkhint', true); setVis('cross', true); setLabels(false); syncButtons(); });
 plc.addEventListener('unlock', () => {
-  if (photoPending) { photoPending = false; measureReset(); setVis('walkhint', false); setVis('cross', false); startPhoto(true); return; }
   measureReset(); setVis('walkhint', false); setVis('cross', false);
   if (mode === 'walk') { pauseWalk(); return; }            // Esc: stay at this spot, mouse free for the menu
   setLabels(document.getElementById('t-labels').checked); if (mode === 'pending') setIso(); });
-renderer.domElement.addEventListener('click', () => { if (mode === 'walkpause' && !photo) resumeWalk(); });
+renderer.domElement.addEventListener('click', () => { if (mode === 'walkpause') resumeWalk(); });
 
 addEventListener('wheel', e => {
   if (mode !== 'walk') return;
@@ -3294,7 +2978,7 @@ addEventListener('wheel', e => {
 }, { passive:true });
 const keys = {};
 document.getElementById('walk-exit').onclick = () => setIso();
-addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'KeyF' && mode === 'walk' && plc.isLocked && !photo && !NIGHT) { photoPending = true; plc.unlock(); } });
+addEventListener('keydown', e => { keys[e.code] = true; });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
 /* ===================== UI ===================== */
@@ -3332,14 +3016,13 @@ function renderChairSwatches() {                                 // …and the c
 const SLOT_ROOM = { sofa:'sogg', coffee:'sogg', lamps:'sogg', dining:'pranzo', chairs:'pranzo', pendant:'pranzo', bed:'cam1' };
 const SLOT_LABEL = { sofa:'Divano', coffee:'Tavolino', lamps:'Applique', dining:'Tavolo', chairs:'Sedie', pendant:'Lampadario', bed:'Letto' };
 const roomBox = slot => $('room-' + (SLOT_ROOM[slot] || 'sogg'));
-const shortName = n => { const p = n.split(' · '); return (p[0] + (n.startsWith('IKEA TARSELE') ? ' ' + p[1].split(' ')[0] : n.startsWith('Kave Home Brisia') ? ' ' + (p[2].includes('1 sfera') ? '1' : '2') : '')).replace(/^(IKEA|Sklum|Kave Home|Beliani|Westwing|Design For The People|Maisons du Monde) /, ''); };
+const shortName = n => { const p = n.split(' · '); return (p[0] + (n.startsWith('IKEA TARSELE') ? ' ' + p[1].split(' ')[0] : '')).replace(/^(IKEA|Sklum|Kave Home|Beliani|Westwing|Design For The People|Maisons du Monde) /, ''); };
 function syncRoomSummaries() {                   // the current pick, at a glance, on each closed room
   const by = {};
   for (const [slot, room] of Object.entries(SLOT_ROOM)) if (CHOICE[slot] !== 'none') (by[room] ||= []).push(shortName(pickItem(slot).name));
   by.cucina = [pickGres().short];
-  by.cam2 = [CHOICE.door7 === 'flush' ? 'Porta rasomuro' : 'Porta a specchio'];
   (by.cam1 ||= []).push('Parete ' + pickBedWall()[1].split(' · ')[0].toLowerCase());
-  for (const r of ['sogg', 'pranzo', 'cucina', 'cam1', 'cam2']) { const el = $('rsum-' + r); if (el) el.textContent = (by[r] || ['—']).join(' · '); }
+  for (const r of ['sogg', 'pranzo', 'cucina', 'cam1']) { const el = $('rsum-' + r); if (el) el.textContent = (by[r] || ['—']).join(' · '); }
 }
 document.querySelectorAll('details.room').forEach(d => {          // remember which rooms are open (this browser only)
   try { if (JSON.parse(localStorage.getItem('irnerio-rooms') || '["sogg"]').includes(d.dataset.room)) d.open = true; } catch { if (d.dataset.room === 'sogg') d.open = true; }
@@ -3371,7 +3054,7 @@ groupedSwatches(BEDWALL_GROUPS, 'bedWall', 'Parete dietro il letto', () => { app
 syncRoomSummaries();
 // Show only the settings of the room being looked at: in Cammina the room you stand in; in 3D / Pianta the room at
 // the centre of the screen once zoomed in (the whole-house overview shows every room). 'Tutte' shows them all.
-const ROOM_GROUPS = { liv:['sogg', 'pranzo'], kit:['cucina'], bed1:['cam1'], bed2:['cam2'] };
+const ROOM_GROUPS = { liv:['sogg', 'pranzo'], kit:['cucina'], bed1:['cam1'] };
 let roomAll = false, roomNow;
 const roomRay = new THREE.Raycaster(), _rc = new THREE.Vector2(0, 0);
 function viewedRoom() {
@@ -3443,8 +3126,6 @@ function syncDoorButtons() {                     // highlight Aperte / Chiuse on
   $('d-open').classList.toggle('on', st.every(Boolean)); $('d-closed').classList.toggle('on', !st.some(Boolean));
 }
 $('d-open').onclick = () => setDoors(true); $('d-closed').onclick = () => setDoors(false);
-$('d7type').value = CHOICE.door7;
-$('d7type').onchange = e => { CHOICE.door7 = e.target.value; try { localStorage.setItem('irnerio-arredi', JSON.stringify(CHOICE)); } catch {} buildDoors(); syncRoomSummaries(); };
 $('c-full').onclick = () => setCut(Infinity); $('c-cut').onclick = () => setCut(120);
 
 const pb = $('pbody'), cb = $('collapse');
@@ -3542,7 +3223,7 @@ function sunLabel(t) { const m = Math.round((7 + 12 * t) * 4) / 4, h = Math.floo
    A slice of the work runs each frame until the result settles; it starts again when the sun moves or anything in
    the flat changes (a door, a piece of furniture, a colour). The sun itself stays a real light with a shadow map.
    If the browser cannot run it, the window spot-lights of the old lighting are used instead. */
-// the sun as a light in Cammina: the same values feed the shadow-mapped light and the probes (as in Foto realistica)
+// the sun as a light in Cammina: the same values feed the shadow-mapped light and the probes
 const _sunC = new THREE.Color();
 function sunLight(d) { return { intensity:NIGHT ? 0 : 6 + 3 * d.y, color:_sunC.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y) }; }
 const GI = (() => {
@@ -3550,7 +3231,7 @@ const GI = (() => {
   Object.assign(cfg, { expK:5, lRef:.08, expP:.75, wb:.6, tooSlow:160 });   // exposure expK where a white wall would read lRef; how far it and the white balance adapt; ms a round may take
   const st = { on:false, failed:!renderer.capabilities.isWebGL2, exposure:8, cfg, n:0, todo:0, tris:0, ms:0, rev:0 };
   const X0 = -40, Y0 = -46, X1 = 1104, Y1 = 903, H0 = .3, H1 = 3.12;    // plan cm / metres: the flat including its outer walls
-  const SKY = 3.5 * .8, USABLE = 14;                                    // sky as in Foto realistica (× glass)
+  const SKY = 3.5 * .8, USABLE = 14;                                    // sky brightness (× glass)
   let lib = null, loading = false, bvhU = null, colTex = null, T = null, P = null, nx = 0, ny = 0, nz = 0;
   let ready = false, away = false, tick = 0, turn = 0, every = 1, cold = true, depTodo = 0, builtSig = null, seenSig = 0, lightSig = null, lastCheck = 0, probes = null, warm = false;
   const quad = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3)));
@@ -3900,7 +3581,7 @@ const GI = (() => {
     return true;
   }
   function frame(dt) {
-    if (st.failed || photo) return;
+    if (st.failed) return;
     try {
       if (!ready) {
         if ((INSIDE || warm) && !loading) { loading = true; import('three-mesh-bvh').then(m => { lib = m; return init(); }).catch(fail); }
@@ -4127,12 +3808,12 @@ const RF = (() => {
   // which map the scene uses right now (also called from applyLight)
   function apply() {
     const z = st.zone, on = INSIDE && GI.on && !st.failed && !!(z && z.tex);
-    if (!photo) scene.environment = !INSIDE ? (NIGHT ? getNightEnv() : roomEnv) : on ? z.tex : NIGHT ? getNightEnv() : interiorEnv;
+    scene.environment = !INSIDE ? (NIGHT ? getNightEnv() : roomEnv) : on ? z.tex : NIGHT ? getNightEnv() : interiorEnv;
     GIU.rfOn.value = on ? 1 : 0; st.on = on;
     if (on) { GIU.rfMin.value.copy(z.min); GIU.rfMax.value.copy(z.max); GIU.rfPos.value.copy(z.pos); }
   }
   function frame() {
-    if (st.failed || photo) return;
+    if (st.failed) return;
     if (!(INSIDE && GI.on)) { job = null; if (st.on) apply(); return; }
     try {
       if (!cube) init();
@@ -4160,10 +3841,8 @@ function applyLight() {
     sp.intensity = spots ? WIN_I * (.5 + .5 * el) * (1 + .9 * face) : 0; sp.visible = spots;
     sp.color.set(0xe4ecfb).lerp(_warmWin, Math.min(1, face * .8 + (1 - el) * .5));
   }
-  if (!photo) {
-    RF.apply();
-    M.ceiling.emissiveIntensity = INSIDE ? 0 : .8; corniceMat.emissiveIntensity = INSIDE ? 0 : .55;
-  }
+  RF.apply();
+  M.ceiling.emissiveIntensity = INSIDE ? 0 : .8; corniceMat.emissiveIntensity = INSIDE ? 0 : .55;
   if (INSIDE) {
     const d = sunDir(SUN_T);
     sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.4 + 1.2 * d.y; sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
@@ -4174,7 +3853,7 @@ function applyLight() {
     renderer.toneMappingExposure = gi ? GI.expose() * AGX_GAIN : EXP_IN;
   } else { hemi.color.set(0xfffaf2); hemi.groundColor.set(0xd8cfc2); }
   GIU.giOn.value = gi ? 1 : 0;
-  if (!photo) renderer.toneMapping = gi ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;   // the film-like curve goes with the real light
+  renderer.toneMapping = gi ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;   // the film-like curve goes with the real light
   // sun shadows: sharp where something touches the floor, softer the farther the edge that casts them (a window head, a
   // curtain); the sun taken about twice its real width, as through a thin haze. Desktop only: it costs a few more samples
   { const c = sun.shadow.camera, texel = (c.right - c.left) / sun.shadow.mapSize.x;
@@ -4186,7 +3865,7 @@ function applyLight() {
     for (const sp of WIN_LIGHTS) sp.intensity *= .004;
     hemi.color.set(0x93a4c9); hemi.groundColor.set(0x6c7387);
     if (INSIDE) { if (!gi) { hemi.intensity = GI_HOOK ? .002 : .02; renderer.toneMappingExposure = 40; } }
-    else { hemi.intensity = GI_HOOK ? .001 : .012; renderer.toneMappingExposure = 90; if (!photo) { M.ceiling.emissiveIntensity = 0; corniceMat.emissiveIntensity = 0; } }
+    else { hemi.intensity = GI_HOOK ? .001 : .012; renderer.toneMappingExposure = 90; M.ceiling.emissiveIntensity = 0; corniceMat.emissiveIntensity = 0; }
   }
   renderer.shadowMap.needsUpdate = true;
 }
@@ -4405,7 +4084,7 @@ function buildSpots() {
 }
 function toggleLamp(id) { if (LAMP_OFF.has(id)) LAMP_OFF.delete(id); else LAMP_OFF.add(id); NL.apply(); }
 function setNight(on) {
-  if (photo || NIGHT === on) return;
+  if (NIGHT === on) return;
   NIGHT = on;
   $('l-day').classList.toggle('on', !on); $('l-night').classList.toggle('on', on); $('night-tip').hidden = $('lt-row').hidden = $('ld-row').hidden = !on;
   if (on) { buildBulbs(); NL.init(); }
@@ -4445,102 +4124,6 @@ $('q-hq').onclick = () => { HQ = true; applyQuality(); buildDoors(); };
 $('sun').oninput = e => { SUN_T = e.target.value / 100; applyQuality(false); };
 applyQuality(true);
 
-/* ===================== Foto realistica (path tracing) =====================
-   Loads three-gpu-pathtracer on demand and accumulates physically based samples from the current view.
-   The invisible roof becomes a real roof, so daylight and the sun enter only through the windows. */
-let PT = null, PTmod = null, photoPending = false;   // photo: declared with HQ (used early by applyLight)
-const PHOTO_TARGET = 300;
-let PHOTO_EXP = 8;          // daylight only through the windows (no fake ceiling glow) → a slightly longer 'camera' exposure
-try {
-  const v = +localStorage.getItem('irnerio-photo-exp');
-  if (v && !localStorage.getItem('irnerio-photo-exp2')) { localStorage.setItem('irnerio-photo-exp', v * 1.45); localStorage.setItem('irnerio-photo-exp2', '1'); }
-  PHOTO_EXP = +localStorage.getItem('irnerio-photo-exp') || 8;
-} catch {}
-async function startPhoto(fromWalk = false) {
-  if (photo) return;
-  if (NIGHT) { toast('La foto realistica funziona solo con la luce di giorno.'); return; }
-  if (cam !== persp) { toast('La foto realistica funziona nelle viste 3D e Cammina.'); return; }
-  photo = { fromWalk, ready:false, frames:0 };
-  orbitP.enabled = false;
-  $('photomsg').textContent = 'Preparo la scena…'; $('photoprog').style.width = '0'; setVis('photobar', true);
-  try {
-    PTmod = PTmod || await import('three-gpu-pathtracer');
-    if (!photo) return;
-    if (!PT) {
-      // fields the path tracer reads on every Scene (added in three r162); identity defaults for r160
-      if (!THREE.Scene.prototype.backgroundRotation) { THREE.Scene.prototype.backgroundRotation = new THREE.Euler(); THREE.Scene.prototype.environmentRotation = new THREE.Euler(); }
-      PT = new PTmod.WebGLPathTracer(renderer);
-      PT.tiles.set(IS_MOBILE ? 3 : 2, IS_MOBILE ? 3 : 2);
-      PT.bounces = 6; PT.filterGlossyFactor = .5; PT.minSamples = 1; PT.renderDelay = 0; PT.fadeDuration = 400;
-      PT.textureSize.set(1024, 1024);
-    }
-    PT.renderScale = Math.min(1, (IS_MOBILE ? .8 : 1.25) / renderer.getPixelRatio());
-    // photo lighting: soft sky + sun at the chosen hour, real roof
-    photo.saved = { env:scene.environment, exposure:renderer.toneMappingExposure, sunPos:sun.position.clone(), sunI:sun.intensity, sunC:sun.color.clone(), roof:roof.visible, sky:sky.visible, labels:G.labels.visible, plan:G.planLines.visible, grid:G.grid.visible };
-    const env = photo.env = new PTmod.GradientEquirectTexture(64);
-    env.topColor.set(0xcfe0f2); env.bottomColor.set(0xe8dcc6); env.exponent = 2; env.update();
-    scene.environment = env; scene.environmentIntensity = 3.5;
-    // the faint glow on ceilings and cornices only fakes bounce light in the live view; the path tracer computes the
-    // real bounces, so switch it off or the ceilings would act as light panels in the photo
-    photo.saved.glow = [M.ceiling, corniceMat].map(m => [m, m.emissiveIntensity]);
-    for (const [m] of photo.saved.glow) m.emissiveIntensity = 0;
-    for (const sp of WIN_LIGHTS) sp.intensity = 0;
-    const d = sunDir(SUN_T); sun.position.copy(d).multiplyScalar(25); sun.intensity = 6 + 3 * d.y; sun.color.setHSL(.09, .55 - .3 * d.y, .8 + .1 * d.y);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = PHOTO_EXP;     // interiors lit only through windows need a 'camera' exposure
-    roof.visible = persp.position.y < 3.25;              // from inside: real roof; from above (dollhouse view) leave it open
-    sky.visible = false; setLabels(false); G.planLines.visible = false; G.grid.visible = false;
-    aimDot.visible = false; mGroup.visible = false; setVis('cross', false); setVis('mread', false); setVis('pausehint', false);
-    for (const e of MIRROR_LIST) { e.refl.visible = e.far.visible = false; e.pbr.visible = true; }   // the path tracer reflects a metal mirror for real
-    if (GLOSS.refl) { GLOSS.refl.visible = false; GLOSS.u.rOn.value = 0; }                           // …and the polished stone too
-    await new Promise(r => setTimeout(r, 60));          // let the overlay paint before the BVH build blocks
-    if (!photo) return;
-    PT.setScene(scene, persp);
-    photo.ready = true; photo.t0 = performance.now();
-  } catch (err) {
-    console.error(err);
-    endPhoto();
-    toast('Non riesco a caricare il motore della foto realistica. Riprova più tardi.');
-  }
-}
-function endPhoto() {
-  if (!photo) return;
-  const s = photo.saved, wasWalk = photo.fromWalk;
-  if (s) {
-    scene.environment = s.env; delete scene.environmentIntensity; renderer.toneMappingExposure = s.exposure;
-    for (const [m, v] of s.glow || []) m.emissiveIntensity = v;
-    for (const sp of WIN_LIGHTS) sp.intensity = INSIDE ? WIN_I : 0;
-    sun.position.copy(s.sunPos); sun.intensity = s.sunI; sun.color.copy(s.sunC);
-    roof.visible = s.roof; G.planLines.visible = s.plan; G.grid.visible = s.grid;
-    if (photo.env) photo.env.dispose();
-  }
-  mGroup.visible = true; photo = null; setVis('photobar', false);
-  updateMirrors(); applyLight();
-  if (PT) PT.reset();
-  renderer.shadowMap.needsUpdate = true;
-  if (wasWalk && !touchWalk) {                           // desktop walk: go back into walk at the same spot
-    mode = 'pending'; try { plc.lock(); } catch { setIso(); }
-  } else if (touchWalk) { setVis('cross', true); }
-  else if (mode === 'walkpause') setVis('pausehint', true);
-  else { orbitP.enabled = mode === 'iso'; setLabels($('t-labels').checked); }
-}
-$('photo-btn').onclick = () => startPhoto(false);
-$('walk-photo').onclick = e => { e.stopPropagation(); startPhoto(true); };
-$('photo-close').onclick = () => endPhoto();
-function setPhotoExp(k) {           // tone-mapping exposure applies to the accumulated image: no restart needed
-  PHOTO_EXP = THREE.MathUtils.clamp(PHOTO_EXP * k, 1, 20); renderer.toneMappingExposure = PHOTO_EXP;
-  try { localStorage.setItem('irnerio-photo-exp', PHOTO_EXP); } catch {}
-}
-$('exp-dn').onclick = () => setPhotoExp(1 / 1.25); $('exp-up').onclick = () => setPhotoExp(1.25);
-function photoFrame() {
-  if (!photo.ready) return;
-  PT.renderSample();
-  if ((photo.frames++ & 7) === 0) {
-    const n = Math.floor(PT.samples), pct = Math.min(100, n / PHOTO_TARGET * 100);
-    $('photoprog').style.width = pct + '%';
-    $('photomsg').innerHTML = n >= PHOTO_TARGET ? `Foto pronta · <b>${n}</b> campioni` : `Foto realistica · <b>${n}</b> campioni`;
-  }
-}
-
 /* ===================== theme, resize, loop ===================== */
 function applyTheme() {
   const cs = getComputedStyle(document.documentElement);
@@ -4567,7 +4150,6 @@ const needle = $('needle'), p0 = new THREE.Vector3(), p1 = new THREE.Vector3();
 const clock = new THREE.Clock(); let doorTick = 0, roomTick = 0, toneWarm = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), .05);
-  if (photo) { if (photo.ready) photoFrame(); return; }
   if (mode === 'walk' && plc.isLocked) {
     const sp = (keys.ShiftLeft ? 3 : 1.5) * dt;
     const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
@@ -4586,12 +4168,12 @@ renderer.setAnimationLoop(() => {
     persp.rotation.set(pitch, yaw, 0);
   } else if (mode === 'top') { applyWheelZoom(); orbitO.update(); } else if (mode === 'iso') { applyWheelZoom(); orbitP.update(); }
   animateDoors(dt); updateMirrors(); updateGloss();
-  { const now = performance.now(); if (now - roomTick > 250 && !photo) { roomTick = now; updateRoomFilter(); } }   // ~4×/s, cheap
+  { const now = performance.now(); if (now - roomTick > 250) { roomTick = now; updateRoomFilter(); } }   // ~4×/s, cheap
   if (mode === 'walk') measureFrame(); else if (aimDot.visible) aimDot.visible = false;
   if ((mode === 'walk' || touchWalk) && (doorTick++ & 7) === 0) $('cross').classList.toggle('door', !!(doorAt(0, 0, 3) || lampAt(0, 0, 8)));
-  { const ins = walking() || touchWalk || mode === 'pending'; if (ins !== INSIDE && !photo) { INSIDE = ins; applyQuality(false); } }
+  { const ins = walking() || touchWalk || mode === 'pending'; if (ins !== INSIDE) { INSIDE = ins; applyQuality(false); } }
   if (RELIEF.dirty) RELIEF.pass();
-  if (!toneWarm && !photo && clock.elapsedTime > 1.2) { toneWarm = true; const tm = renderer.toneMapping;
+  if (!toneWarm && clock.elapsedTime > 1.2) { toneWarm = true; const tm = renderer.toneMapping;
     renderer.toneMapping = tm === THREE.AgXToneMapping ? THREE.ACESFilmicToneMapping : THREE.AgXToneMapping;
     try { renderer.compileAsync(scene, persp).catch(() => {}); } catch {} renderer.toneMapping = tm; }
   NL.frame(); GI.frame(dt); RF.frame();
