@@ -1,0 +1,23 @@
+{
+  "name": "home-3d-model",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modello 3D interattivo di un appartamento (Three.js)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "0.160.0",
+    "three-gpu-pathtracer": "0.0.23",
+    "three-mesh-bvh": "0.7.8"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

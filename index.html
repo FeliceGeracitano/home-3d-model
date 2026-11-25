@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Casa Irnerio 15</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+
+<div id="app">
+  <div id="view" aria-label="Modello 3D dell'appartamento"></div>
+
+  <aside class="panel" id="panel">
+    <header class="ph">
+      <div>
+        <h1>Casa Irnerio 15</h1>
+        <p class="sub">Tavola E.03 · scala reale</p>
+      </div>
+      <button id="collapse" class="icon-btn" aria-expanded="true" aria-controls="pbody">Nascondi</button>
+    </header>
+    <div id="pbody" class="pbody">
+      <section>
+        <h2>Vista</h2>
+        <div class="seg" role="group" aria-label="Vista">
+          <button id="v-iso" class="on">3D</button>
+          <button id="v-top">Pianta</button>
+          <button id="v-walk">Cammina</button>
+          <button id="v-reset">Ripristina</button>
+        </div>
+      </section>
+      <section>
+        <h2>Qualità</h2>
+        <div class="seg" role="group" aria-label="Qualità">
+          <button id="q-std">Standard</button>
+          <button id="q-hq">Alta</button>
+        </div>
+        <div class="seg" role="group" aria-label="Luce" style="margin-top:8px">
+          <button id="l-day" class="on">Giorno</button>
+          <button id="l-night">Notte</button>
+        </div>
+        <p id="night-tip" hidden style="margin:6px 0 0;font-size:11.5px;line-height:1.35;color:var(--muted)">Clic su una lampada per accenderla o spegnerla.</p>
+        <label class="sunrow" id="lt-row" for="lt" hidden><span>Lampadine · <b id="lt-lbl">2700 K · bianco caldo</b></span>
+          <input type="range" id="lt" min="0" max="5" step="1" value="1" aria-label="Temperatura di colore delle lampadine"></label>
+        <label class="sunrow" id="ld-row" for="ld" hidden><span>Dimmer, tutte le luci · <b id="ld-lbl">100%</b></span>
+          <input type="range" id="ld" min="0" max="100" step="5" value="100" aria-label="Intensità di tutte le luci"></label>
+        <label class="sunrow" id="sun-row" for="sun"><span>Sole · <b id="sun-lbl">ore 10</b></span>
+          <input type="range" id="sun" min="0" max="100" value="30" aria-label="Posizione del sole"></label>
+        <button id="photo-btn" class="photo-btn">Foto realistica</button>
+      </section>
+      <section>
+        <h2>Generale</h2>
+        <div class="toggles two">
+          <label class="tg"><input type="checkbox" id="t-labels" checked> Etichette</label>
+          <label class="tg"><input type="checkbox" id="t-fix" checked> Arredi fissi</label>
+          <label class="tg"><input type="checkbox" id="t-furn" checked> Mobili</label>
+          <label class="tg"><input type="checkbox" id="t-ceil" checked> Soffitti</label>
+          <label class="tg"><input type="checkbox" id="t-hvac" checked> Clima e VMC</label>
+          <label class="tg"><input type="checkbox" id="t-plan"> Linee disegno</label>
+          <label class="tg"><input type="checkbox" id="t-grid"> Griglia 1 m</label>
+        </div>
+        <div class="grow"><span>Porte</span>
+          <div class="seg" role="group" aria-label="Porte">
+            <button id="d-open" class="on">Aperte</button>
+            <button id="d-closed">Chiuse</button>
+          </div></div>
+        <div class="grow"><span>Pareti</span>
+          <div class="seg" role="group" aria-label="Altezza pareti">
+            <button id="c-full" class="on">Piene</button>
+            <button id="c-cut">Sezione 1,20 m</button>
+          </div></div>
+      </section>
+      <section class="rooms">
+        <h2 class="rh">Stanze · <span id="rooms-ctx">tutta la casa</span><button id="rooms-all" class="mini" type="button" title="Mostra le opzioni di tutte le stanze">Tutte</button></h2>
+        <p id="rooms-none" class="rnone" hidden></p>
+        <details class="room" data-room="sogg"><summary>Soggiorno <span class="rsum" id="rsum-sogg"></span></summary><div class="fsel" id="room-sogg"></div></details>
+        <details class="room" data-room="pranzo"><summary>Zona pranzo <span class="rsum" id="rsum-pranzo"></span></summary><div class="fsel" id="room-pranzo"></div></details>
+        <details class="room" data-room="cucina"><summary>Cucina <span class="rsum" id="rsum-cucina"></span></summary><div class="fsel" id="room-cucina"></div></details>
+        <details class="room" data-room="cam1"><summary>Camera 1 <span class="rsum" id="rsum-cam1"></span></summary><div class="fsel" id="room-cam1"></div></details>
+        <details class="room" data-room="cam2"><summary>Camera 2 <span class="rsum" id="rsum-cam2"></span></summary><div class="fsel" id="room-cam2">
+          <label>Porta<select id="d7type">
+            <option value="mirror">A specchio · si apre verso il soggiorno</option>
+            <option value="flush">Rasomuro · si apre verso la camera</option>
+          </select></label></div></details>
+      </section>
+      <details id="checks">
+        <summary>Verifica superfici <span id="chk-sum" class="chip">–</span></summary>
+        <div class="tblwrap"><table>
+          <thead><tr><th>Stanza</th><th class="n">Modello</th><th class="n">Disegno</th><th class="n">Δ</th></tr></thead>
+          <tbody id="chk-body"></tbody>
+        </table></div>
+        <p class="note">Le superfici del modello sono calcolate dai pavimenti 3D. La superficie della lavanderia nel disegno include le soglie delle due porte scorrevoli (140 × 138).</p>
+      </details>
+      <p class="hint">Trascina per ruotare · tasto destro o due dita per spostare · rotella o pizzico per lo zoom. Passa sopra una stanza per vederne le misure. Clic su una porta per aprirla o chiuderla.</p>
+    </div>
+  </aside>
+
+  <div id="info" class="info" hidden></div>
+  <div id="walkhint" class="walkhint" hidden><span id="walktext">W A S D per muoverti · mouse per guardarti intorno · rotella per la visuale · tasto destro per misurare · tasto sinistro sulle porte per aprirle o chiuderle e, di notte, sulle lampade per accenderle o spegnerle (o per annullare la misura) · F foto realistica · Esc per mettere in pausa</span><button id="walk-photo" hidden>Foto</button><button id="walk-measure" hidden>Misura</button><button id="walk-clear" hidden>Annulla misura</button><button id="walk-exit" hidden>Esci</button></div>
+  <div id="pausehint" class="walkhint" hidden>In pausa · clicca sulla scena per riprendere</div>
+  <div id="mread" class="mread" hidden></div>
+  <div id="photobar" class="photobar" hidden role="status"><span id="photomsg">Preparo la scena…</span><span class="bar"><i id="photoprog"></i></span><span class="exp" role="group" aria-label="Luminosità"><button id="exp-dn" class="ghost" aria-label="Più scura">−</button><span>Luce</span><button id="exp-up" class="ghost" aria-label="Più chiara">+</button></span><button id="photo-close">Chiudi</button></div>
+  <div id="joy" class="joy" hidden><i id="joyknob"></i></div>
+  <div id="cross" class="crosshair" hidden></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div class="compass" title="Nord del disegno (alto della tavola)">
+    <svg viewBox="-20 -20 40 40" aria-hidden="true"><g id="needle">
+      <path class="n" d="M0 -15 L5 0 L-5 0 Z"/><path class="s" d="M0 15 L5 0 L-5 0 Z"/>
+      <text x="0" y="-16.5" text-anchor="middle" dy="0">N</text></g></svg>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
