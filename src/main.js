@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
@@ -24,21 +25,21 @@ import VIOLA_THUMB_JPG from './assets/calacatta-viola-thumb.jpg';
 const R = (x0, x1, y0, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
 
 const PLAN = {
-  wallH: 329,          // structural height (Bedroom 1 ceiling)
+  wallH: 307,          // structural height (Bedroom 1 ceiling, +295 above +12 floor)
   doorH: 210,
   slabPoly: [[-50,-56],[1114,-56],[1114,913],[506,913],[506,551],[-50,551]],
 
   rooms: [
-    { id:'bed1',  name:'Camera 1',   poly:R(0,354,0,531),        h:329, drawing:18.80, size:'354 × 531', floor:'parquet' },
-    { id:'bath1', name:'Bagno 1', poly:R(366,506,0,280.4),    h:270, drawing:3.93,  size:'140 × 281', floor:'greige' },
-    { id:'util',  name:'Lavanderia',  poly:R(366,506,292.4,418.5),h:270, drawing:1.93,  size:'140 × 126', floor:'tile', note:true },
-    { id:'corr',  name:'Disimpegno',  poly:R(366,506,430.5,531),  h:270, drawing:1.41,  size:'140 × 101', floor:'parquet' },
+    { id:'bed1',  name:'Camera 1',   poly:R(0,354,0,531),        h:307, drawing:18.80, size:'354 × 531', floor:'parquet' },
+    { id:'bath1', name:'Bagno 1', poly:R(366,506,0,280.4),    h:282, drawing:3.93,  size:'140 × 281', floor:'greige' },
+    { id:'util',  name:'Lavanderia',  poly:R(366,506,292.4,418.5),h:282, drawing:1.93,  size:'140 × 126', floor:'tile', note:true },
+    { id:'corr',  name:'Disimpegno',  poly:R(366,506,430.5,531),  h:282, drawing:1.41,  size:'140 × 101', floor:'parquet' },
     { id:'bath2', name:'Bagno 2', poly:[[556,-6.1],[681,-6.1],[681,270.4],[522,270.4],[522,151.5],[556,151.5]],
-      h:250, drawing:3.86, size:'125 / 159 × 277', floor:'travFloor', label:[601,200] },
-    { id:'bed2',  name:'Camera 2',   poly:R(693,1064,-6.1,270.4),h:309, drawing:10.26, size:'371 × 277', floor:'parquet' },
-    { id:'kit',   name:'Cucina',     poly:R(556,711,285.4,688),  h:270, drawing:6.24,  size:'155 × 403', floor:'parquet', label:[603,400] },
+      h:277, drawing:3.86, size:'125 / 159 × 277', floor:'travFloor', label:[601,200] },
+    { id:'bed2',  name:'Camera 2',   poly:R(693,1064,-6.1,270.4),h:297, drawing:10.26, size:'371 × 277', floor:'parquet' },
+    { id:'kit',   name:'Cucina',     poly:R(556,711,285.4,688),  h:282, drawing:6.24,  size:'155 × 403', floor:'parquet', label:[603,400] },
     { id:'entry', name:'Ingresso',   poly:R(556,711,688,863),    h:270, drawing:2.71,  size:'155 × 175', floor:'parquet', label:[633,800] },
-    { id:'liv',   name:'Soggiorno',poly:R(711,1064,285.4,863), h:327, drawing:20.39, size:'353 × 578', floor:'parquet' },
+    { id:'liv',   name:'Soggiorno',poly:R(711,1064,285.4,863), h:297, drawing:20.39, size:'353 × 578', floor:'parquet' },
   ],
 
   // Straight walls: r=[x0,x1,y0,y1]; ops=[[from,to,bottom,top]] along the wall's long axis
@@ -48,10 +49,10 @@ const PLAN = {
     { r:[-50,506,531,551] },                           // south, left block
     { r:[506,556,-6.1,151.5] },                        // structural mass between bathrooms
     { r:[506,522,151.5,270.4] },
-    { r:[506,556,270.4,517.5], ops:[[437.5,517.5,0,220]] },  // mass + hallway→kitchen door
+    { r:[506,556,270.4,517.5], ops:[[437.5,517.5,0,262]] },  // mass + open hallway→kitchen passage (250 clear above +12 floor)
     { r:[506,556,517.5,913] },                         // kitchen/entrance west wall
     { r:[556,577.5,863,913] },                         // south facade
-    { r:[577.5,690.5,863,909], ops:[], zOnly:[230,329] },     // lintel over the entrance recess
+    { r:[577.5,690.5,863,909], ops:[], zOnly:[230,307] },     // lintel over the entrance recess
     { r:[577.5,690.5,909,913], ops:[[577.5,690.5,0,230]] },   // front door
     { r:[690.5,974,863,913] },
     { r:[974,1034,863,913] },                          // former 60 × 25 recess, filled flush (owner's request)
@@ -59,14 +60,14 @@ const PLAN = {
     // interior partitions
     // bedroom 1 | bath/laundry/hall. Its bedroom face (x 354) is the wall behind the bed: own paint colour, corner to
     // corner and up under the cornice (Camera 1 → Parete dietro il letto); door reveals stay white
-    { r:[354,366,-0.1,531], ops:[[73.4,153.5,0,220],[437.5,517.5,0,220]], paintFace:[-1,'bedWall'] },
-    { r:[366,506,280.4,292.4], ops:[[366,433.5,0,220]] },   // bath 1 | laundry (pocket door)
-    { r:[366,506,418.5,430.5], ops:[[366,433.5,0,220]] },   // laundry | hallway (pocket door)
-    { r:[681,693,-6.1,270.4], ops:[[81,160.5,0,232]] },     // bath 2 | bedroom 2 (pocket door)
-    { r:[556,1064,270.4,285.4], ops:[[962,1042,0,232]] },   // bedrooms | kitchen + living (D7: standard door, 2.10 above bedroom 2's floor)
-    { r:[556,606,63.9,75.9], h:250 },                       // shower stub wall, bath 2
+    { r:[354,366,-0.1,531], ops:[[89.5,169.5,0,222],[433.5,513.5,0,222]], paintFace:[-1,'bedWall'] },
+    { r:[366,506,280.4,292.4], ops:[[366,433.5,0,222]] },   // bath 1 | laundry (pocket door)
+    { r:[366,506,418.5,430.5], ops:[[366,433.5,0,222]] },   // laundry | hallway (pocket door)
+    { r:[681,693,-6.1,270.4], ops:[[81,160.5,0,237]] },     // bath 2 | bedroom 2 (pocket door, 2.10 above +27 floor)
+    { r:[556,1064,270.4,285.4], ops:[[962,1042,0,237]] },   // bedrooms | kitchen + living (D7: standard door, 2.10 above bedroom 2's +27 floor)
+    { r:[556,606,63.9,75.9], h:277 },                       // shower stub wall, bath 2 (up to 250 clear ceiling)
     { r:[1042,1064,488,529] },                              // chimney flue
-    { r:[556,711,688,698], h:270 },                         // plasterboard partition kitchen | entrance (10 cm, up to the 2.70 false ceiling)
+    { r:[556,711,688,698], h:282 },                         // plasterboard partition kitchen | entrance (10 cm, up to kitchen's 2.70 clear ceiling)
   ],
 
   // Facade pieces with splayed window reveals (exact outlines from the drawing)
@@ -82,18 +83,18 @@ const PLAN = {
   // niche = splayed inner reveal; open = clear opening in the outer leaf; glassX = frame plane
   // VERIFY: sill/top heights are not on the drawings (typical values used)
   windows: [
-    { id:'W1', niche:[[0,205],[-30,212.4],[-30,342.4],[0,349.9]],       open:R(-50,-30,222.4,332.4), glassX:-31,  sill:90, top:260 },
-    { id:'W2', niche:[[1064,61.7],[1094,70.3],[1094,194.3],[1064,202.9]], open:R(1094,1114,82.3,182.3),  glassX:1095, sill:90, top:260 },
-    { id:'W3', niche:[[1064,346.7],[1094,355.3],[1094,479.4],[1064,488]], open:R(1094,1114,367.3,467.4), glassX:1095, sill:90, top:260 },
-    { id:'W4', niche:[[1064,632.9],[1094,640.9],[1094,764.9],[1064,773]], open:R(1094,1114,652.9,752.9), glassX:1095, sill:0,  top:260 },
+    { id:'W1', niche:[[0,205],[-30,212.4],[-30,342.4],[0,349.9]],       open:R(-50,-30,222.4,332.4), glassX:-31,  sill:92, top:262 },
+    { id:'W2', niche:[[1064,61.7],[1094,70.3],[1094,194.3],[1064,202.9]], open:R(1094,1114,82.3,182.3),  glassX:1095, sill:92, top:262 },
+    { id:'W3', niche:[[1064,346.7],[1094,355.3],[1094,479.4],[1064,488]], open:R(1094,1114,367.3,467.4), glassX:1095, sill:92, top:262 },
+    { id:'W4', niche:[[1064,632.9],[1094,640.9],[1094,764.9],[1064,773]], open:R(1094,1114,652.9,752.9), glassX:1095, sill:0,  top:262 },
   ],
 
   // Hinged doors: hinge point, width, closed/open leaf directions
   doors: [
-    { id:'D1', hinge:[354,73.4],   w:80,   closed:[0,1],  open:[-1,0] },
-    { id:'D2', hinge:[354,517.5],  w:80,   closed:[0,-1], open:[-1,0] },
+    { id:'D1', hinge:[354,89.5],   w:80,   closed:[0,1],  open:[-1,0] },
+    { id:'D2', hinge:[354,513.5],  w:80,   closed:[0,-1], open:[-1,0] },
     // D5 (hallway ↔ kitchen) removed: open passage, no door leaf
-    { id:'D7', hinge:[1042,285.4], w:80,   closed:[-1,0], open:[0,1], h:222, z0:10, mirror:true, gold:true },   // bedroom 2: full-height mirror on the living face, pulls open into the living room
+    { id:'D7', hinge:[1042,285.4], w:80,   closed:[-1,0], open:[0,1], h:225, z0:12, mirror:true, gold:true },   // bedroom 2: full-height mirror on the living face, pulls open into the living room
     { id:'F1', hinge:[577.5,909],  w:113,  closed:[1,0],  open:[0,-1], h:230, classic:true },   // front door: one classic brown leaf, hinged on the right (seen from inside), opens inward
   ],
 
@@ -153,13 +154,13 @@ const PLAN = {
     [R(596,646,633,683),90,90.6,'hob'],               // cooktop
     // Wall unit over the hob row, against the partition, flush with the living-room edge (VERIFY depth/height)
     [R(556,633.5,653,688),160,270,'kwhite'], [R(633.5,711,653,688),160,270,'kwhite'],
-    [R(596,646,656,688),142,150,'steel'],            // integrated hood
+    [R(596,646,656,688),152,160,'steel'],            // integrated hood
     // Entrance unit facing the front door (IKEA LACK + PAX/FORSAND, white): built in buildEntryWardrobe()
     // Radiators (IRSAP, sizes from sheet E.10)
-    [R(368,375,160,209.9),15,126,'towel'],           // KART h 1110 (white towel warmer)
+    [R(497,504,167.5,217.5),124,206,'towel'],        // bath 1 towel warmer, on east wall above bidet (between mirror and WC)
     [R(566.5,616.5,261.4,268.4),122,233,'towel'],     // KART h 1110, above the tiled wainscot
     [R(-24,-6,232.4,322.4),12,78.7,'radiator'],      // TESI 4 h 667
-    [R(1070,1088,92.3,172.3),12,68.7,'radiator'],    // TESI 4 h 567
+    [R(1070,1088,92.3,172.3),7,63.7,'radiator'],     // TESI 4 h 567 (sits cleanly under sill 92 on +27 floor)
     [R(1046,1060,296.7,336.7),10,190.2,'radiator'],  // TESI 3 h 1802
     [R(1046,1060,780.9,820.9),10,190.2,'radiator'],  // TESI 3 h 1802
     [R(1119.1,1139.1,592.6,632.6),110,180,'appliance'], // boiler on balcony (VERIFY height)
@@ -172,7 +173,7 @@ const PLAN = {
   panels: [
     // Bathroom 1 — greige paint; shower clad to 240 in Florim Tundra glossy slabs (160 × 320), no niche (owner).
     // Slab pieces: [..., 'tundra', layer, [u0, v0, turned]] = slab cm (seen from the room) at the piece's bottom-left corner.
-    ['x',366,0,73.4,0,270,1,'paint',1], ['x',366,153.5,280.4,0,270,1,'paint',1], ['x',366,73.4,153.5,210,270,1,'paint',1],
+    ['x',366,0,89.5,0,270,1,'paint',1], ['x',366,169.5,280.4,0,270,1,'paint',1], ['x',366,89.5,169.5,210,270,1,'paint',1],
     ['x',506,0,280.4,0,270,-1,'paint',1], ['y',0,366,506,240,270,1,'paint',1],
     ['y',280.4,433.5,506,0,270,-1,'paint',1], ['y',280.4,366,433.5,210,270,-1,'paint',1],
     // back wall: one 140 × 240 piece (slab u 10–150, v 60–300)
@@ -192,8 +193,9 @@ const PLAN = {
   ],
   // Organic mirror (bath 1): [axis, faceAt, centreAlong, centreZ, halfWidth, halfHeight, dir]
   mirrors: [ ['x',506,117,172,22,48,-1] ],
-  soffit: R(709,711,285.4,863),  // H57 plasterboard drop between kitchen (270) and living (327)
-  // Sheet E.08 (impianto A/C + VMC). Plenum slots sit in the H57 drop facing the living room;
+  soffitKit: R(709,711,285.4,688),   // 15 cm plasterboard drop between kitchen (282) and living (297)
+  soffitEnt: R(709,711,688,863),     // 27 cm plasterboard drop between entrance (270) and living (297)
+  // Sheet E.08 (impianto A/C + VMC). Plenum slots sit in the soffit drop facing the living room;
   // bedroom supply grilles sit in the lintels above the doors, fed from the bathroom false ceilings.
   hvac: {
     acUnit:  R(586,676,704.8,844.8),          // A/C indoor unit, above the entrance false ceiling
@@ -201,10 +203,10 @@ const PLAN = {
     vmcUnit: R(637.3,697.3,604.7,674.7),      // VMC unit, above the kitchen false ceiling
     linear:  [[334.9,435],[710.5,810.5]],      // 100 cm linear supply slots in the drop (y ranges)
     grilles: [                                 // [axis x, face dir, y0, y1, z0, z1, kind]
-      [354, -1, 74.9, 145, 226, 242, 'mandata'],   // bedroom 1, above the bathroom door
-      [354, -1, 442.5, 512.5, 226, 242, 'mandata'],// bedroom 1, above the hallway door
-      [693,  1, 85.4, 155.5, 238, 250, 'mandata'], // bedroom 2, above the bathroom pocket door
-      [354, -1, 305, 345, 226, 242, 'ripresa'],    // bedroom 1 return — VERIFY exact position
+      [354, -1, 94.5, 164.5, 228, 244, 'mandata'], // bedroom 1, above the bathroom door
+      [354, -1, 438.5, 508.5, 228, 244, 'mandata'],// bedroom 1, above the hallway door
+      [693,  1, 85.4, 155.5, 243, 255, 'mandata'], // bedroom 2, above the bathroom pocket door
+      [354, -1, 281.5, 321.5, 228, 244, 'ripresa'],// bedroom 1 return, centred over the bed
     ],
     vmc: [[476,250,'bath1'],[651,240,'bath2'],[666.5,560,'kit']],   // ceiling extract valves
   },
@@ -219,9 +221,8 @@ const wx = x => (x - CX) * S, wz = y => (y - CY) * S;
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 const IS_MOBILE = matchMedia('(pointer: coarse)').matches || innerWidth < 640;
-// Quality: 'Alta' = ambient occlusion + sun entering through the windows (default on desktop)
-let HQ = !IS_MOBILE, SUN_T = .3, INSIDE = false, NIGHT = false;   // INSIDE: eye-level view (Cammina) → daylight only through the windows
-try { const q = JSON.parse(localStorage.getItem('irnerio-quality') || 'null'); if (q) { HQ = !!q.hq; SUN_T = +q.sun || .3; } } catch {}
+let SUN_T = .3, INSIDE = false, NIGHT = false;   // INSIDE: eye-level view (Cammina) → daylight only through the windows
+try { const q = JSON.parse(localStorage.getItem('irnerio-quality') || 'null'); if (q && q.sun != null) SUN_T = +q.sun || .3; } catch {}
 renderer.setPixelRatio(Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -366,7 +367,7 @@ const PS_CHUNK = (() => {
 ` + b);
 })();
 const RF_CHUNK = THREE.ShaderChunk.envmap_physical_pars_fragment
-  .replace('vec4 envMapColor = textureCubeUV( envMap, reflectVec, roughness );', 'vec4 envMapColor = textureCubeUV( envMap, rfDir( reflectVec ), rfOn > 0.5 ? max( roughness, 0.1 ) : roughness );')   // a touch of blur: the picture is small and only roughly placed
+  .replace('vec4 envMapColor = textureCubeUV( envMap, reflectVec, roughness );', 'vec4 envMapColor = textureCubeUV( envMap, rfDir( reflectVec ), rfOn > 0.5 ? max( roughness, 0.05 ) : roughness );')   // crisp reflections on polished stone, glass and glaze
   .replace('return envMapColor.rgb * envMapIntensity;', 'return envMapColor.rgb * ( rfOn > 0.5 ? 1.0 : envMapIntensity );');   // a real room needs no per-material fudge
 if (!RF_CHUNK.includes('rfDir')) console.warn('RF: shader chunk not patched');
 /* ===================== night: the lamps as lights (what every lit material needs) =====================
@@ -485,7 +486,7 @@ const sun = new THREE.DirectionalLight(0xfff1dc, .8);               // soft warm
 sun.position.set(4, 18, 7);
 sun.castShadow = true;
 sun.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048);
-Object.assign(sun.shadow.camera, { left:-9, right:9, top:9, bottom:-9, near:1, far:40 });
+Object.assign(sun.shadow.camera, { left:-8.2, right:8.2, top:8.2, bottom:-8.2, near:1, far:40 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
 scene.add(sun);
 
@@ -745,9 +746,11 @@ function wood(tex, own = false) {
   const r = GRAIN.clone(); r.wrapS = tex.wrapS; r.wrapT = tex.wrapT; r.repeat.copy(tex.repeat); r.center.copy(tex.center); r.rotation = tex.rotation; r.needsUpdate = true;
   return { map:tex, roughnessMap:r };
 }
-const RELIEF = { dirty:true, pass() {     // swap the old shared bump textures for their normal maps, wherever they turn up
+const MAX_ANISO = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+const RELIEF = { dirty:true, pass() {     // swap the old shared bump textures for their normal maps, and sharpen grazing textures with anisotropic filtering
   RELIEF.dirty = false;
   scene.traverse(o => { for (const m of [].concat(o.material || [])) {
+    for (const k of ['map', 'normalMap', 'roughnessMap']) { const tx = m[k]; if (tx && tx.anisotropy < MAX_ANISO) { tx.anisotropy = MAX_ANISO; tx.needsUpdate = true; } }
     const e = m.bumpMap && RELIEF.pick(m); if (!e) continue;
     m.normalMap = e[0]; m.normalScale.setScalar(Math.max(.2, Math.min(e[2], m.bumpScale * e[1]))); m.bumpMap = null; m.needsUpdate = true;
   } });
@@ -777,21 +780,21 @@ const M = {
   joinery:  new THREE.MeshStandardMaterial({ color:0xebe8e1, roughness:.8 }),
   kitchen:  new THREE.MeshStandardMaterial({ color:0x86b2a6, roughness:.7 }),
   worktop:  new THREE.MeshStandardMaterial({ color:0xe9e7e2, roughness:.5 }),
-  sanitary: new THREE.MeshStandardMaterial({ color:0xfdfdfc, roughness:.25 }),
+  sanitary: new THREE.MeshPhysicalMaterial({ color:0xfdfdfc, roughness:.16, clearcoat:.85, clearcoatRoughness:.1, ior:1.5 }),
   tray:     new THREE.MeshStandardMaterial({ color:0xdfe2e0, roughness:.6 }),
   appliance:new THREE.MeshStandardMaterial({ color:0xd4d7d6, roughness:.5 }),
   radiator: new THREE.MeshStandardMaterial({ color:0xf4f4f1, roughness:.35 }),   // white lacquered (pink was the drawing's legend colour)
   dark:     new THREE.MeshStandardMaterial({ color:0x262a29, roughness:.3 }),
   steel:    new THREE.MeshStandardMaterial({ color:0xc9cecd, roughness:.35, metalness:.25 }),
-  kwhite:   new THREE.MeshStandardMaterial({ color:0xf7f6f2, roughness:.45 }),
-  hob:      new THREE.MeshStandardMaterial({ color:0x0c0d0e, roughness:.14, envMapIntensity:.35 }),   // black glass cooktop
-  parquet:  new THREE.MeshStandardMaterial({ color:new THREE.Color().setRGB(.9, .85, .8, THREE.LinearSRGBColorSpace),   // bleached oak: light, low-saturation, slightly warm
-    roughness:.7, map:herringboneTex(), side:THREE.DoubleSide }),
+  kwhite:   new THREE.MeshPhysicalMaterial({ color:0xf7f6f2, roughness:.38, clearcoat:.25, clearcoatRoughness:.35 }),
+  hob:      new THREE.MeshPhysicalMaterial({ color:0x090a0b, roughness:.08, clearcoat:1, clearcoatRoughness:.04, ior:1.5, envMapIntensity:1.1 }),   // black glass cooktop
+  parquet:  new THREE.MeshPhysicalMaterial({ color:new THREE.Color().setRGB(.9, .85, .8, THREE.LinearSRGBColorSpace),   // bleached oak: light, low-saturation, slightly warm, subtle oiled sheen
+    roughness:.7, clearcoat:.16, clearcoatRoughness:.42, ior:1.48, map:herringboneTex(), side:THREE.DoubleSide }),
   paint:    new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.96, bumpMap:plasterTex, bumpScale:.35, envMapIntensity:.85 }),
   // polished porcelain: dielectric glaze (F0 ≈ 4 %), near-mirror gloss; reflections come from the environment map
   tundra:   new THREE.MeshPhysicalMaterial({ color:0xffffff, map:tundraTex, roughness:.075, metalness:0, ior:1.5, envMapIntensity:1.1 }),
   tundraGloss: null,                           // the shower back wall: tundra + live planar reflection (set up below, after M)
-  greenTile:new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.2, map:greenTileTex() }),
+  greenTile:new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.18, clearcoat:.85, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2, map:greenTileTex() }),
   trav:     new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.55, map:travertineTexture(false) }),
   walnut:   new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.6, ...wood(walnutTex()) }),
   doorBrown: new THREE.MeshStandardMaterial({ color:0x9c8574, roughness:.42, ...wood(radWalnutTex(true)) }),   // classic brown front door
@@ -804,14 +807,14 @@ const M = {
   mirror:   new THREE.MeshStandardMaterial({ color:0xeef3f5, roughness:.05, metalness:0, emissive:0x2a3236, side:THREE.DoubleSide }),
   greige:   new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.8, map:greigeFloorTex(), side:THREE.DoubleSide }),
   travFloor:new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.6, map:travertineTexture(false), side:THREE.DoubleSide }),
-  viola:    new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.2 }),     // kitchen gres; map set by applyGres()
+  viola:    new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.2, clearcoat:.72, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2 }),     // kitchen gres; map set by applyGres()
   sand:     new THREE.MeshStandardMaterial({ color:0xcdc3b2, roughness:.55 }),
   sandBody: new THREE.MeshStandardMaterial({ color:0xbfb5a4, roughness:.7 }),
   profile:  new THREE.MeshStandardMaterial({ color:0xc9c6bf, roughness:.35, metalness:.4 }),
-  calacatta: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.3, map:calacattaTexture() }),
+  calacatta: new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.22, clearcoat:.55, clearcoatRoughness:.12, ior:1.5, map:calacattaTexture() }),
   travertine: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.75, map:travertineTexture() }),
-  door:     new THREE.MeshStandardMaterial({ color:0xe8e4dc, roughness:.7 }),
-  glass:    new THREE.MeshStandardMaterial({ color:0xa9cbd8, roughness:.05, transparent:true, opacity:.28, depthWrite:false }),
+  door:     new THREE.MeshPhysicalMaterial({ color:0xe8e4dc, roughness:.55, clearcoat:.2, clearcoatRoughness:.38 }),
+  glass:    new THREE.MeshPhysicalMaterial({ color:0xd2e6ee, roughness:.03, metalness:0, ior:1.5, reflectivity:.95, clearcoat:1, clearcoatRoughness:.02, transparent:true, opacity:.16, envMapIntensity:1.6, depthWrite:false }),
   rail:     new THREE.MeshStandardMaterial({ color:0x5d6461, roughness:.5, metalness:.4 }),
 };
 M.bedWall = M.paint.clone();   // bedroom 1, wall behind the bed: same matt plaster, colour from the Camera 1 swatches
@@ -838,7 +841,7 @@ function prism(poly, z0, z1, mat, group, { edges = true, cut = true, shadow = tr
   if (eb) m.position.copy(eb.at); else m.position.y = z0 * S;
   m.castShadow = shadow && mat !== M.glass; m.receiveShadow = true;
   group.add(m);
-  if (group === G.walls) { m.castShadow = (HQ || INSIDE) && mat !== M.glass; edges = false; }
+  if (group === G.walls) { m.castShadow = mat !== M.glass; edges = false; }
   if (edges) { const e = new THREE.LineSegments(new THREE.EdgesGeometry(eb ? new THREE.BoxGeometry(eb.w, eb.h, eb.d) : g, 25), edgeMat); e.position.copy(m.position); group.add(e); }
   return m;
 }
@@ -866,13 +869,13 @@ function clear(group) {
   group.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.isMaterial && o.userData.own) o.material.dispose(); });
   group.clear();
 }
-/* Floor levels (owner): entrance landing at 0; rest of the flat one 10 cm step up;
-   bedroom 2 + bathroom 2 a further 12 cm up (22) to give the drains their fall. Ceilings stay where they are. */
+/* Floor levels (owner): entrance landing at 0; rest of the flat one 12 cm step up;
+   bedroom 2 + bathroom 2 a further 15 cm up (27) to give the drains their fall and align ceilings realistically. */
 function lvl(x, y) {
   if (x > 1114) return 0;                                         // balcony
   if (x >= 556 && x <= 711 && y >= 688) return 0;                 // entrance landing + door recess
-  if (x >= 522 && x <= 1064 && y >= -6.1 && y <= 270.4) return 22; // bedroom 2 + bathroom 2
-  return 10;
+  if (x >= 522 && x <= 1064 && y >= -6.1 && y <= 270.4) return 27; // bedroom 2 + bathroom 2
+  return 12;
 }
 function inPoly([x, y], poly) {
   let c = false;
@@ -883,7 +886,7 @@ function inPoly([x, y], poly) {
   return c;
 }
 const roomAt = (x, y) => PLAN.rooms.find(r => inPoly([x, y], r.poly));
-const ceilAt = (x, y) => roomAt(x, y)?.h ?? 329;
+const ceilAt = (x, y) => roomAt(x, y)?.h ?? 307;
 const cen = poly => { const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]); return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; };
 // shift a fitting by the finished-floor level, but never push it through the ceiling (wall units up to the ceiling stay put)
 function lift(x, y, z0, z1) { const L = lvl(x, y), c = ceilAt(x, y), s = Math.max(0, Math.min(L, c - z1)); return [z0 + s, z1 + s]; }
@@ -906,7 +909,7 @@ function buildFloors() {
     m.userData.room = r; m.userData.own = true; floorMeshes.push(m);
   }
   // thresholds under door openings and window niches
-  const extra = [R(354,366,73.4,153.5), R(354,366,437.5,517.5), R(366,433.5,280.4,292.4), R(366,433.5,418.5,430.5),
+  const extra = [R(354,366,89.5,169.5), R(354,366,433.5,513.5), R(366,433.5,280.4,292.4), R(366,433.5,418.5,430.5),
     R(681,693,81,160.5), R(962,1042,270.4,285.4), R(506,556,437.5,517.5), R(577.5,690.5,863,909),
     ...PLAN.windows.map(w => w.niche)];
   extra.forEach(p => { const L = lvl(...cen(p)); if (L > 0) prism(p, 0, L - .1, M.step, G.floors, { cut:false, edges:false }); flat(p, L, M.tile, G.floors); });
@@ -950,7 +953,7 @@ function elevWall(w, top) {
   out.setAttribute('uv', new THREE.Float32BufferAttribute(ua, 2));
   if (src !== g) src.dispose(); g.dispose();
   const m = new THREE.Mesh(out, [M.cap, M.wall, M[w.paintFace[1]]]);
-  m.castShadow = HQ || INSIDE; m.receiveShadow = true; G.walls.add(m);
+  m.castShadow = true; m.receiveShadow = true; G.walls.add(m);
   return m;
 }
 function buildWalls() {
@@ -1065,7 +1068,7 @@ M.tundraGloss.customProgramCacheKey = () => 'gloss' + (GI_HOOK ? 'gi' : '');
 function dropGloss() { if (GLOSS.refl) { GLOSS.refl.dispose(); GLOSS.refl = null; } GLOSS.u.rOn.value = 0; }
 function addGloss(axis, at, a0, a1, z0, z1, dir) {        // one reflecting plane over the wall face (plan cm, absolute z)
   dropGloss(); if (z1 > CUT) return;
-  const w = (a1 - a0) * S, h = (z1 - z0) * S, rw = 768, rh = 480;
+  const w = (a1 - a0) * S, h = (z1 - z0) * S, rw = IS_MOBILE ? 512 : 1024, rh = IS_MOBILE ? 320 : 640;
   const refl = new Reflector(new THREE.PlaneGeometry(w, h), { clipBias:.003, textureWidth:rw, textureHeight:rh, multisample:0 });
   refl.material.colorWrite = false; refl.material.depthWrite = false;   // draws nothing itself: only renders the reflection
   refl.raycast = () => {}; refl.castShadow = refl.receiveShadow = false;
@@ -1091,7 +1094,7 @@ const _gp = new THREE.Vector3(), _gn = new THREE.Vector3();
 function updateGloss() {                                           // live only up close, facing it, in view, in Alta qualità
   const r = GLOSS.refl; if (!r) return;
   let on = false;
-  if (HQ && cam === persp) {
+  if (cam === persp) {
     r.getWorldPosition(_gp); _gn.set(0, 0, 1).transformDirection(r.matrixWorld);
     on = persp.position.distanceTo(_gp) < 4.5 && _gn.dot(_gp.clone().sub(persp.position)) < 0 && _mf.intersectsObject(r);
   }
@@ -1103,8 +1106,8 @@ function updateGloss() {                                           // live only 
 const MIRROR_LIST = [];
 const mirrorPBR = new THREE.MeshStandardMaterial({ color:0xe4ebee, roughness:.03, metalness:1, envMapIntensity:1.1 });
 function addMirror(geo, place, parent, tag) {
-  const w = geo.parameters?.width ?? 1, h = geo.parameters?.height ?? 1, res = HQ ? 1024 : 512;
-  const refl = new Reflector(geo, { clipBias:.001, textureWidth:res, textureHeight:Math.min(2048, Math.round(res * Math.max(.6, h / w))), color:0xc9cdcd, multisample:HQ ? 4 : 0 });
+  const w = geo.parameters?.width ?? 1, h = geo.parameters?.height ?? 1, res = 1024;
+  const refl = new Reflector(geo, { clipBias:.001, textureWidth:res, textureHeight:Math.min(2048, Math.round(res * Math.max(.6, h / w))), color:0xc9cdcd, multisample:4 });
   const far = new THREE.Mesh(geo, M.mirror), pbr = new THREE.Mesh(geo, mirrorPBR);
   for (const o of [refl, far, pbr]) { place(o); parent.add(o); }
   refl.visible = false; pbr.visible = false;      // updateMirrors / RF switch them each frame
@@ -1150,7 +1153,7 @@ function panel([axis, at, a0, a1, z0, z1, dir, mk, layer = 1, slab]) {
 
 // Peninsula as one bookmatched slab: the photo, turned landscape, covers the 180 cm face toward the living room
 // in a single piece; the top and the exposed end continue it as a waterfall (mirrored at the edges).
-const violaSlabMat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.22, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2 });
+const violaSlabMat = new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.22, clearcoat:.72, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-2 });
 // Selected gres finish → slab map (whole 180 × 98 cm piece on the peninsula) + tiled map (hob-row block)
 const gresCache = {};
 function gresMaps(g, done) {
@@ -1371,12 +1374,12 @@ function buildKitchenFronts() {
   bar(179, 658, 692);
   // wall units over the hob (fronts at y 653 facing the hob): four doors, top and bottom edges shadowed
   const yw0 = 652.75, yw1 = 653;
-  for (const x of [594.75, 633.5, 672.25]) g(x - .15, x + .15, yw0, yw1, 160, 270);
-  g(556, 711, yw0, yw1, 160, 160.4);
+  for (const x of [594.75, 633.5, 672.25]) g(x - .15, x + .15, yw0, yw1, B + 160, B + 270);
+  g(556, 711, yw0, yw1, B + 160, B + 160.4);
 }
 // Gres splashback: the whole wall under the wall units behind the hob, cut from the same slab (one piece, 155 × 70)
 function buildSplashback() {
-  const B = lvl(633, 670), z0 = B + 90, z1 = Math.min(160, CUT), y = 687.8;     // up to the wall units (they hang at 1.60)
+  const B = lvl(633, 670), z0 = B + 90, z1 = Math.min(B + 160, CUT), y = 687.8;     // up to the wall units (160 above floor)
   if (z1 <= z0) return;
   const u = x => (711 - x) / 180, v = z => .03 + (z - z0) / 98;
   slabQuad([[711, y, z0], [556, y, z0], [556, y, z1], [711, y, z1]], [[u(711), v(z0)], [u(556), v(z0)], [u(556), v(z1)], [u(711), v(z1)]]);
@@ -1418,34 +1421,27 @@ function buildKitchenSink() {
   lev.position.set(tx, ty + .135, Z).add(new THREE.Vector3(0, 1, 0).applyEuler(lev.rotation).multiplyScalar(.05));
 }
 
-// Plaster cornices (owner's reference photo): a stepped cove at the wall–ceiling joint all round the room,
-// plus a double ceiling rib with rounded corners inset from the walls. Same paint colour, satin.
+// Plaster cornices (owner's sample photo): a single cove moulding at the wall–ceiling corner all round the room
+// (~8 cm out on the ceiling × ~10.5 cm down the wall). Same paint colour, satin.
 const CORNICE_ROOMS = [
-  { poly:[[711,285.4],[1064,285.4],[1064,488],[1042,488],[1042,529],[1064,529],[1064,863],[711,863]], room:'liv', frame:[756,1019,330,818] },
-  { poly:R(0,354,0,531),        room:'bed1', frame:[45,309,45,486] },
-  { poly:R(693,1064,-6.1,270.4), room:'bed2', frame:[738,1019,39,225] },
+  // cuts: [edgeIndex, [[y0, y1], ...]] breaks the cornice along that edge (with flat end caps) around the A/C slots
+  { poly:[[711,285.4],[1064,285.4],[1064,488],[1042,488],[1042,529],[1064,529],[1064,863],[711,863]], room:'liv',
+    cuts:{ 7: PLAN.hvac.linear.map(([a, b]) => [a - 2, b + 2]) } },
+  { poly:R(0,354,0,531),         room:'bed1' },
+  { poly:R(693,1064,-6.1,270.4), room:'bed2' },
 ];
 const corniceMat = new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.55, envMapIntensity:.9, emissive:0xf6f3ed, emissiveIntensity:.55, side:THREE.DoubleSide });
 const corniceShape = (() => {                  // profile in cm: x = out from the wall, y = down from the ceiling (negative)
   const s = new THREE.Shape();
-  s.moveTo(0, 0); s.lineTo(12, 0); s.lineTo(12, -1.2); s.lineTo(10.5, -1.2); s.lineTo(10.5, -2.2);
-  s.quadraticCurveTo(4, -2.6, 3.2, -9); s.lineTo(4.2, -9); s.lineTo(4.2, -10.4); s.lineTo(2.4, -10.4);
-  s.lineTo(2.4, -12.2); s.lineTo(1.2, -12.2); s.lineTo(1.2, -13.5); s.lineTo(0, -13.5); s.closePath();
+  s.moveTo(0, 0); s.lineTo(8, 0); s.lineTo(8, -.8); s.lineTo(7.2, -.8);
+  s.quadraticCurveTo(7.3, -1.8, 6.4, -2.2); s.lineTo(5.8, -2.4); s.lineTo(5.8, -3);
+  s.quadraticCurveTo(2.6, -3.8, 2.2, -7.4); s.lineTo(2.8, -7.6);
+  s.quadraticCurveTo(3.1, -8.5, 2.3, -9.1); s.lineTo(1.6, -9.3); s.lineTo(1.6, -10.2);
+  s.quadraticCurveTo(1.6, -10.5, 1.1, -10.5); s.lineTo(0, -10.5); s.closePath();
   return s;
 })();
-function roundedRing(x0, x1, y0, y1, r, w) {   // flat ring (plan cm) for the ceiling rib
-  const rr = (s, a0, a1, b0, b1, rad) => {
-    s.moveTo(wx(a0 + rad), -wz(b0)); s.lineTo(wx(a1 - rad), -wz(b0)); s.quadraticCurveTo(wx(a1), -wz(b0), wx(a1), -wz(b0 + rad));
-    s.lineTo(wx(a1), -wz(b1 - rad)); s.quadraticCurveTo(wx(a1), -wz(b1), wx(a1 - rad), -wz(b1));
-    s.lineTo(wx(a0 + rad), -wz(b1)); s.quadraticCurveTo(wx(a0), -wz(b1), wx(a0), -wz(b1 - rad));
-    s.lineTo(wx(a0), -wz(b0 + rad)); s.quadraticCurveTo(wx(a0), -wz(b0), wx(a0 + rad), -wz(b0));
-  };
-  const outer = new THREE.Shape(); rr(outer, x0, x1, y0, y1, r);
-  const hole = new THREE.Path(); rr(hole, x0 + w, x1 - w, y0 + w, y1 - w, r - w); outer.holes.push(hole);
-  return outer;
-}
+const corniceCapGeo = (() => { const g = new THREE.ShapeGeometry(corniceShape, 8); g.scale(S, S, 1); return g; })();
 function buildCornices() {
-  const S3 = (x, y) => new THREE.Vector3(x, 0, y);
   const prof = corniceShape.getPoints(8).map(p => [p.x, p.y]);       // profile polyline: x = out from the wall, y = down
   if (prof.length > 1 && prof[0][0] === prof[prof.length - 1][0] && prof[0][1] === prof[prof.length - 1][1]) prof.pop();
   for (const C of CORNICE_ROOMS) {
@@ -1459,24 +1455,34 @@ function buildCornices() {
     });
     const mit = P.map((_, i) => { const [ax, ay] = nIn[(i + n - 1) % n], [bx, by] = nIn[i], k = 1 + ax * bx + ay * by; return [(ax + bx) / k, (ay + by) / k]; });
     const pos = [], K = prof.length;
-    for (let i = 0; i < n; i++) {
-      const i2 = (i + 1) % n;
+    const sweep = (pA, mA, pB, mB) => {
       for (let k = 0; k < K; k++) {
         const [u0, v0] = prof[k], [u1, v1] = prof[(k + 1) % K];
-        const q = (vi, u, v) => [wx(P[vi][0] + u * mit[vi][0]), (h + v) * S, wz(P[vi][1] + u * mit[vi][1])];
-        const A = q(i, u0, v0), B = q(i2, u0, v0), Cq = q(i2, u1, v1), D = q(i, u1, v1);
+        const q = (p, m, u, v) => [wx(p[0] + u * m[0]), (h + v) * S, wz(p[1] + u * m[1])];
+        const A = q(pA, mA, u0, v0), B = q(pB, mB, u0, v0), Cq = q(pB, mB, u1, v1), D = q(pA, mA, u1, v1);
         pos.push(...A, ...B, ...Cq, ...A, ...Cq, ...D);
       }
+    };
+    const cap = (px, py, nx, ny) => {
+      const m = new THREE.Mesh(corniceCapGeo, corniceMat);
+      m.position.set(wx(px), h * S, wz(py)); m.rotation.y = Math.atan2(-ny, nx); G.ceilings.add(m);
+    };
+    for (let i = 0; i < n; i++) {
+      const i2 = (i + 1) % n, gaps = C.cuts?.[i];
+      if (!gaps) { sweep(P[i], mit[i], P[i2], mit[i2]); continue; }
+      // split edge along its axis around the gaps (supports edges running along y)
+      const [x0, y0] = P[i], [, y1] = P[i2], dir = Math.sign(y1 - y0);
+      const sorted = gaps.slice().sort((a, b) => dir > 0 ? a[0] - b[0] : b[1] - a[1]);
+      let curY = y0, curM = mit[i];
+      for (const [ga, gb] of sorted) {
+        const gStart = dir > 0 ? ga : gb, gEnd = dir > 0 ? gb : ga;
+        if (dir * (gStart - curY) > 0) { sweep([x0, curY], curM, [x0, gStart], nIn[i]); cap(x0, gStart, ...nIn[i]); }
+        curY = gEnd; curM = nIn[i]; cap(x0, gEnd, ...nIn[i]);
+      }
+      if (dir * (y1 - curY) > 0) sweep([x0, curY], curM, P[i2], mit[i2]);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
     G.ceilings.add(new THREE.Mesh(g, corniceMat));
-    // double rib on the ceiling, rounded corners (as in the photo)
-    const [x0, x1, y0, y1] = C.frame;
-    for (const [inset, w, d] of [[0, 3.2, 1.6], [4.6, 1.4, 1]]) {
-      const g = new THREE.ExtrudeGeometry(roundedRing(x0 + inset, x1 - inset, y0 + inset, y1 - inset, 38 - inset, w), { depth:d * S, bevelEnabled:false, curveSegments:12 });
-      g.rotateX(-Math.PI / 2);
-      const mesh = new THREE.Mesh(g, corniceMat); mesh.position.y = (h - d) * S; G.ceilings.add(mesh);
-    }
   }
 }
 
@@ -1628,7 +1634,7 @@ function buildPlates() {
   }
   plate(700, 863, 0, -1, 105);                   // entrance
   for (const [x, y, nx, ny, z] of [
-    [354, 180, -1, 0, 30], [354, 411, -1, 0, 30],   // bedroom 1, behind the two bedside tables
+    [354, 191.5, -1, 0, 30], [354, 411.5, -1, 0, 30], // bedroom 1, behind the two bedside tables
     [0, 528, 1, 0, 30],                              // desk
     [570, 688, 0, -1, 105], [695, 688, 0, -1, 105],  // kitchen backsplash
     [506, 165, -1, 0, 115],                          // bathroom 1 vanity
@@ -1727,7 +1733,7 @@ function buildDoors() {
       for (const f of [-1, 1]) {
         const off = f < 0 ? 0 : t, sx = nX * (f < 0 ? -1 : 1), sy = nY * (f < 0 ? -1 : 1);
         const fx = px + nX * off, fy = py + nY * off;
-        const hz = gold ? (10 + 105 - base) * S : 1.05;    // gold lever: 105 above the living floor whatever the leaf base
+        const hz = gold ? (12 + 105 - base) * S : 1.05;    // gold lever: 105 above the living floor whatever the leaf base
         const ros = new THREE.Mesh(new THREE.CylinderGeometry(gold ? .021 : .025, gold ? .021 : .025, gold ? .006 : .01, 32), hm);
         ros.rotation[nX ? 'z' : 'x'] = Math.PI / 2; ros.position.set(wx(fx + sx * .5), hz, wz(fy + sy * .5)); inner.add(ros);
         const neck = new THREE.Mesh(new THREE.CylinderGeometry(gold ? .0065 : .009, gold ? .0065 : .009, .05, 16), hm);
@@ -1817,29 +1823,48 @@ function lampAt(x, y, maxDist = Infinity) {
 const lampAtEvent = (e, maxDist) => { const b = renderer.domElement.getBoundingClientRect(); return lampAt((e.clientX - b.left) / b.width * 2 - 1, -(e.clientY - b.top) / b.height * 2 + 1, maxDist); };
 const doorAtEvent = (e, maxDist) => { const b = renderer.domElement.getBoundingClientRect(); return doorAt((e.clientX - b.left) / b.width * 2 - 1, -(e.clientY - b.top) / b.height * 2 + 1, maxDist); };
 
-let LIV_CEIL = 327;   // structural, no false ceiling (owner's choice; E.07 showed a possible one at 320)
+let LIV_CEIL = 297;   // 285 cm clear above living room's +12 floor
+const grilleWhite = new THREE.MeshStandardMaterial({ color:0xf7f7f5, roughness:.35, metalness:.1 });
 function buildCeilings() {
   clear(G.ceilings); clear(G.hvac);
   PLAN.rooms.find(r => r.id === 'liv').h = LIV_CEIL;
   for (const r of PLAN.rooms) {               // face down: lit from below, culled when seen from above
-    // kitchen ceiling runs 4 mm under the drop's living face, so the drop's own underside never shares its plane
-    const poly = r.id === 'kit' ? r.poly.map(([x, y]) => [x >= 711 ? 711.4 : x, y]) : r.poly;
+    // kitchen & entrance ceilings run 4 mm under the drop's living face, so the drop's own underside never shares their plane
+    const poly = (r.id === 'kit' || r.id === 'entry') ? r.poly.map(([x, y]) => [x >= 711 ? 711.4 : x, y]) : r.poly;
     const g = new THREE.ShapeGeometry(shapeOf(poly)); g.rotateX(Math.PI / 2); g.scale(1, 1, -1); g.computeVertexNormals();
     const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const k = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = k; }
     g.computeVertexNormals();
     const m = new THREE.Mesh(g, M.ceiling); m.position.y = r.h * S; m.receiveShadow = true; G.ceilings.add(m);
   }
-  prism(PLAN.soffit, 270.4, LIV_CEIL, M.wall, G.ceilings, { cut:false, edges:false });   // starts just above the kitchen ceiling: no coplanar faces
-  buildCornices();   // H57 / H50 plasterboard drop
-  // ---- A/C and VMC (sheet E.08)
-  const H = PLAN.hvac, zs = 270 + (LIV_CEIL - 270) * .55;
-  for (const [y0, y1] of H.linear) {
-    prism(R(711, 711.4, y0, y1), zs - 2.5, zs + 2.5, M.slot, G.hvac, { cut:false, edges:false });
-  }
-  for (const [x, dir, y0, y1, z0, z1, kind] of H.grilles) {
-    // same flush linear slot as the living-room plenums, for a consistent look
-    const zc = (z0 + z1) / 2, a = dir < 0 ? x - .4 : x;
-    prism(R(a, a + .4, y0, y1), zc - 2.5, zc + 2.5, M.slot, G.hvac, { cut:false, edges:false });
+  prism(PLAN.soffitKit, 282.4, LIV_CEIL, M.wall, G.ceilings, { cut:false, edges:false });   // starts just above the kitchen ceiling (282)
+  prism(PLAN.soffitEnt, 270.4, LIV_CEIL, M.wall, G.ceilings, { cut:false, edges:false });   // starts just above the entrance ceiling (270)
+  buildCornices();
+  // ---- A/C and VMC (sheet E.08): white linear bar grilles with outer frame, horizontal louvers and centre mullion
+  const H = PLAN.hvac;
+  const airGrille = (x, dir, y0, y1, z0, z1) => {
+    const xBox = (d0, d1, ya, yb, za, zb, mat) => {
+      const xa = Math.min(x + dir * d0, x + dir * d1), xb = Math.max(x + dir * d0, x + dir * d1);
+      prism(R(xa, xb, ya, yb), za, zb, mat, G.hvac, { cut:false, edges:false });
+    };
+    const F = 1.2, ih = z1 - z0 - 2 * F, nBars = Math.max(2, Math.round(ih / 1.65) - 1), bt = .55;
+    xBox(0, .25, y0 + F * .6, y1 - F * .6, z0 + F * .6, z1 - F * .6, M.slot);    // dark recessed plenum backing
+    xBox(0, .7, y0, y1, z1 - F, z1, grilleWhite);           // top frame rail
+    xBox(0, .7, y0, y1, z0, z0 + F, grilleWhite);           // bottom frame rail
+    xBox(0, .7, y0, y0 + F, z0 + F, z1 - F, grilleWhite);   // left frame stile
+    xBox(0, .7, y1 - F, y1, z0 + F, z1 - F, grilleWhite);   // right frame stile
+    for (let i = 1; i <= nBars; i++) {                      // horizontal white louver bars
+      const zb = z0 + F + ih * i / (nBars + 1);
+      xBox(.25, .62, y0 + F, y1 - F, zb - bt / 2, zb + bt / 2, grilleWhite);
+    }
+    if (y1 - y0 >= 45) {                                    // central vertical support bar
+      const ym = (y0 + y1) / 2;
+      xBox(.25, .58, ym - .4, ym + .4, z0 + F, z1 - F, grilleWhite);
+    }
+  };
+  for (const [y0, y1] of H.linear) airGrille(711, 1, y0, y1, 285.5, 295.5);   // 10 cm tall, tucked high on the soffit drop
+  for (const [x, dir, y0, y1, z0, z1] of H.grilles) {
+    const zc = (z0 + z1) / 2;
+    airGrille(x, dir, y0, y1, zc - 5, zc + 5);
   }
   for (const [cx, cy, room] of H.vmc) {
     const h = PLAN.rooms.find(r => r.id === room).h;
@@ -1848,7 +1873,7 @@ function buildCeilings() {
     const c = new THREE.Mesh(new THREE.CylinderGeometry(.04, .04, .027, 24), M.slot); c.position.copy(m.position); G.hvac.add(c);
   }
   prism(H.acUnit, 272, 302, M.acUnit, G.hvac, { cut:false });
-  prism(H.vmcUnit, 272, 297, M.vmcUnit, G.hvac, { cut:false });
+  prism(H.vmcUnit, 284, 305, M.vmcUnit, G.hvac, { cut:false });
   prism(H.acOut, 0, 62, M.grille, G.hvac, { cut:false });
   const fan = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .01, 32), M.slot);
   fan.rotation.z = Math.PI / 2; fan.position.set(wx(1118.5), .31, wz(816)); G.hvac.add(fan);
@@ -1871,8 +1896,8 @@ function buildLabels() {
 function buildPlanLines() {
   const pos = new Float32Array(PLAN_LINES.length / 4 * 6);
   for (let i = 0, j = 0; i < PLAN_LINES.length; i += 4) {
-    pos[j++] = wx(PLAN_LINES[i]); pos[j++] = .235; pos[j++] = wz(PLAN_LINES[i + 1]);
-    pos[j++] = wx(PLAN_LINES[i + 2]); pos[j++] = .235; pos[j++] = wz(PLAN_LINES[i + 3]);
+    pos[j++] = wx(PLAN_LINES[i]); pos[j++] = .285; pos[j++] = wz(PLAN_LINES[i + 1]);
+    pos[j++] = wx(PLAN_LINES[i + 2]); pos[j++] = .285; pos[j++] = wz(PLAN_LINES[i + 3]);
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   G.planLines.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color:0x2d6c5e })));
@@ -1881,7 +1906,7 @@ function buildPlanLines() {
 
 function buildGrid() {
   const grid = new THREE.GridHelper(14, 14, 0x2d6c5e, 0x7d8783);
-  grid.position.set(wx(560), .232, wz(430)); grid.material.transparent = true; grid.material.opacity = .45;
+  grid.position.set(wx(560), .282, wz(430)); grid.material.transparent = true; grid.material.opacity = .45;
   G.grid.add(grid); G.grid.visible = false;
 }
 
@@ -2337,8 +2362,9 @@ function lampKind(key) {
   const omni = [1, 0, 0, 0];
   switch (key) {
     case atlantaLamp: return { src:mt => mt === opalGlass, I:.03, lobe:omni, reach:7 };
-    case bayonaLamp: return { src:mt => mt === bayonaIn, I:.045, lobe:[.03, 1, 1, .45], reach:8 };
-    case 'amora': return { src:mt => mt === bulbMat, I:.028, lobe:omni, reach:8 };
+    case 'atlantaCeil': return { src:mt => mt === atlantaCeilSrc, I:.06, lobe:omni, reach:8, glow:1.4, grab:.35 };
+    case bayonaLamp: return { src:mt => mt === bayonaIn, I:.045, lobe:[.03, 1, 1, .45], reach:8, dim:true };
+    case 'amora': return { src:mt => mt === bulbMat, I:.028, lobe:omni, reach:8, dim:true };
     case 'desk': return { src:mt => !!mt.emissive && mt.emissive.getHex() !== 0, I:.012, lobe:[.5, 0, .6, 0], reach:5 };
   }
   return null;
@@ -2403,8 +2429,7 @@ function bayonaLamp(x, y, nx, ny, zc) {                     // (x, y) on the wal
     w.position.set(0, sgn * (bayonaGeo.H / 2 + 25) * S, .15 * S); if (sgn < 0) w.rotation.z = Math.PI;
     w.raycast = () => {}; w.renderOrder = 3; g.add(w);
   }
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
+  g.position.set(wx(x + nx * .1), zc * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
 }
 // Westwing Atlanta opal glass wall light, gold (catalogue: 15 wide × h 22 × 23 out, globe Ø 15, 1 × G9; shape from the
 // product photos). A round brushed-brass plate on the wall, a slim straight arm out from its centre, and near the
@@ -2417,11 +2442,38 @@ function atlantaLamp(x, y, nx, ny, zc) {                    // (x, y) on the wal
   add(new THREE.Mesh(new THREE.CylinderGeometry(.45 * S, .45 * S, 1.7 * S, 14), brassBrushed), 0, -1.3, 15.5);   // stem
   add(new THREE.Mesh(new THREE.SphereGeometry(7.62 * S, 48, 10, 0, Math.PI * 2, 0, .62), brassBrushed), 0, -9.6, 15.5);   // cap over the top of the globe
   const ball = add(new THREE.Mesh(new THREE.SphereGeometry(7.5 * S, 48, 28), opalGlass), 0, -9.6, 15.5); ball.castShadow = false;
-  const L = lvl(x + nx * 20, y + ny * 20);
-  g.position.set(wx(x + nx * .1), (L + zc) * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
+  g.position.set(wx(x + nx * .1), zc * S, wz(y + ny * .1)); g.rotation.y = Math.atan2(nx, ny); G.furniture.add(g);
 }
-function livingWallLights(make = bayonaLamp) {   // positions and height from the owner's electrical plan (points at h 250)
-  const H = 250;
+// Westwing Atlanta 4-light ceiling lamp, brushed brass + opal glass (catalogue: Ø 65 × h 30, 4 globes Ø 15):
+// stepped round brass canopy, two slim vertical stems holding two crossed gently-tilted brass arms at slightly
+// different heights, each carrying two hanging opal-glass spheres under shallow brass caps.
+const atlantaCeilSrc = new THREE.MeshStandardMaterial({ visible:false });   // single central night-light emitter for the 4 globes
+function atlantaCeiling(x, y, ceil) {
+  const g = new THREE.Group(); G.furniture.add(g);
+  const add = (m, px, py, pz, parent = g) => { m.position.set(px * S, py * S, pz * S); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
+  add(new THREE.Mesh(new THREE.CylinderGeometry(6.5 * S, 6.5 * S, 2.8 * S, 48), brassBrushed), 0, -1.4, 0);   // canopy drum
+  add(new THREE.Mesh(new THREE.CylinderGeometry(7.8 * S, 7.8 * S, .4 * S, 48), brassBrushed), 0, -3.0, 0);    // ceiling flange
+  const tilt = .12, rx = 24.5;   // arm reach to globe centre: 2 × (24.5 + 7.5) = 64 cm ≈ Ø 65
+  for (const [rot, yc, stemX] of [[.55, -10.2, -4.5], [.55 + Math.PI / 2, -12.0, 4.5]]) {
+    const ag = new THREE.Group(); ag.rotation.y = rot; g.add(ag);
+    const barY = u => yc - u * tilt;
+    const sy = barY(stemX), sLen = -3.2 - sy;                                                                  // vertical stem from canopy flange to arm
+    add(new THREE.Mesh(new THREE.CylinderGeometry(.55 * S, .55 * S, sLen * S, 18), brassBrushed), stemX, -3.2 - sLen / 2, 0, ag);
+    const arm = add(new THREE.Mesh(new THREE.CylinderGeometry(.5 * S, .5 * S, 54 * S, 18), brassBrushed), 0, yc, 0, ag);
+    arm.rotation.z = Math.PI / 2 - tilt;
+    for (const sgn of [-1, 1]) {
+      const gx = sgn * rx, gy = barY(gx);
+      add(new THREE.Mesh(new THREE.CylinderGeometry(.8 * S, 1.2 * S, .9 * S, 20), brassBrushed), gx, gy - .5, 0, ag);   // socket neck
+      add(new THREE.Mesh(new THREE.SphereGeometry(7.62 * S, 40, 10, 0, Math.PI * 2, 0, .58), brassBrushed), gx, gy - 8.3, 0, ag);   // brass cap
+      const ball = add(new THREE.Mesh(new THREE.SphereGeometry(7.5 * S, 40, 24), opalGlass), gx, gy - 8.3, 0, ag);
+      ball.castShadow = false;
+    }
+  }
+  const src = new THREE.Mesh(new THREE.BoxGeometry(.01, .01, .01), atlantaCeilSrc); src.position.set(0, -19 * S, 0); g.add(src);
+  g.position.set(wx(x), (ceil - lvl(x, y)) * S, wz(y));   // buildFurniture adds lvl(x, y) back → canopy stays flush on ceil
+}
+function livingWallLights(make = bayonaLamp) {   // living room wall sconces at 220 cm above floor (proportional to 285 cm ceiling)
+  const H = 220;
   [[791, 863, 0, -1],                  // south wall, between the TV and the entrance
    [1042, 508.5, -1, 0],               // west face of the chimney column (y 488…529), centred on it, above the sofa end
    [791, 285.4, 0, 1]].forEach(([x, y, nx, ny], i) => {   // north wall behind the table, right of the oven column
@@ -2496,7 +2548,7 @@ function bedLorea(mat) {
   // headboard panel standing on its own feet down to the floor, with a sewn flange round its top and sides; a
   // lift-up base whose loose cover falls to the floor, softly rounded top edge, kick pleats at the two foot corners.
   // Made up: white duvet falling past the base edge, grey throw over the foot, beige sleeping pillows, grey in front.
-  const cy = 295.5, hb = 354, W = mat + 16, L = 216, HT = 8, F = FM.loreaChenille;
+  const cy = 301.5, hb = 354, W = mat + 16, L = 216, HT = 8, F = FM.loreaChenille;
   const c = BED_COLORS.find(b => b[0] === CHOICE.bedColor) || BED_COLORS[0];
   F.color.set(c[2]); F.sheenColor.set(c[2]).lerp(_white, .4);
   F.bumpScale = c[0] === 'granoBoucle' ? 1.6 : 1.1; F.bumpMap = c[0] === 'granoBoucle' ? plasterTex : wovenTex; F.needsUpdate = true;
@@ -2556,7 +2608,7 @@ const CATALOG = {
     { id:'none',        name:'Nessuna',               build:() => {} },
   ]},
   pendant: { label:'Lampadario', options:[
-    { id:'amora',   name:'Westwing Amora · 3 vetri champagne + ottone · 35 × 35',        build:() => amoraPendant(887, 405, 327) },
+    { id:'amora',   name:'Westwing Amora · 3 vetri champagne + ottone · 35 × 35',        build:() => amoraPendant(887, 405, LIV_CEIL) },
   ]},
 };
 function placeChairs(seats, off, draw) {
@@ -2673,11 +2725,16 @@ function buildFurnitureItems() {
   // Bedroom 1 bed: from the catalogue (Arredi → Letto)
   pickItem('bed').build();
   { // a Westwing Atlanta wall light each side of the bed, on the headboard wall, midway between the bed and the door next to it
-    const W = 176, cy = 295.5;
-    [(153.4 + cy - W / 2) / 2, (437.5 + cy + W / 2) / 2].forEach((y, i) => {
+    const W = 176, cy = 301.5;
+    [(169.5 + cy - W / 2) / 2, (433.5 + cy + W / 2) / 2].forEach((y, i) => {
       const n0 = G.furniture.children.length; atlantaLamp(354, y, -1, 0, 135);
       lampReg('bedside' + i, G.furniture.children.slice(n0), lampKind(atlantaLamp));
     });
+  }
+  // Westwing Atlanta 4-light ceiling lamps in both bedrooms
+  for (const [id, x, y] of [['bed1', 177, 295], ['bed2', 878.5, 132.15]]) {
+    const n0 = G.furniture.children.length; atlantaCeiling(x, y, PLAN.rooms.find(r => r.id === id).h);
+    lampReg('ceil-' + id, G.furniture.children.slice(n0), lampKind('atlantaCeil'));
   }
 
   // Living room: sofa + TV wall and dining area come from the furniture catalogue (Arredi menu)
@@ -3181,26 +3238,33 @@ renderer.domElement.addEventListener('pointerup', e => {
 /* ===================== quality: GTAO, sun through the windows, sky ===================== */
 // the composer draws into its own target, so the canvas' antialias does not apply: give it 4× MSAA, otherwise
 // thin edges (soffit, cornices, door frames) break into jagged teeth in Alta qualità
+const COMPOSER_DPR = Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2);
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type:THREE.HalfFloatType, samples:4 }));
-composer.setPixelRatio(Math.min(devicePixelRatio, 1.25));   // AO runs at this resolution: clean result, moderate cost
+composer.setPixelRatio(COMPOSER_DPR);   // crisp native HiDPI render; GTAO scales separately below to stay fast
 const renderPass = new RenderPass(scene, persp);
 const gtao = new GTAOPass(scene, persp, 800, 600);
-gtao.updateGtaoMaterial({ radius:.22, distanceExponent:1, thickness:.6, scale:1, samples:12 });
-gtao.updatePdMaterial({ lumaPhi:10, depthPhi:2, normalPhi:3, radius:4, rings:2, samples:8 });
-gtao.blendIntensity = .75;
+gtao.updateGtaoMaterial({ radius:.28, distanceExponent:1.25, thickness:.72, scale:1, samples:IS_MOBILE ? 10 : 16 });
+gtao.updatePdMaterial({ lumaPhi:10, depthPhi:2, normalPhi:3, radius:4.5, rings:2, samples:8 });
+gtao.blendIntensity = .84;
 gtao.normalMaterial.side = THREE.DoubleSide;   // otherwise mirrored cornice runs vanish from the AO depth pass → blotchy patches
-composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(new OutputPass());
+{ const orig = gtao.setSize.bind(gtao);
+  gtao.setSize = (w, h) => {
+    const k = Math.min(1, (IS_MOBILE ? 1 : 1.3) / COMPOSER_DPR);
+    orig(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+  }; }
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .08, .5, 1.3);
+composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bloom); composer.addPass(new OutputPass());
 // invisible lid over the flat: blocks the sun from above so light only enters through the windows
 for (const m of [M.wall, M.cap, M.bedWall]) m.shadowSide = THREE.BackSide;
 const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeOf(PLAN.slabPoly), { depth:.3, bevelEnabled:false }).rotateX(-Math.PI / 2),
   new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:1, colorWrite:false, depthWrite:false }));   // seals the wall tops (no light leaks)
-roof.position.y = 3.28; roof.castShadow = true; roof.receiveShadow = false; scene.add(roof);
+roof.position.y = 3.06; roof.castShadow = true; roof.receiveShadow = false; scene.add(roof);
 // three.js tests shadow casters against the MAIN camera's layers, so the lid must stay on layer 0 to cast at all.
 // It draws no colour and no depth; keep it out of raycasts (measuring, doors, hover) and out of the AO normal pass.
 roof.raycast = () => {};
 { // the landing outside the front door: like the lid, unseen but solid, so the sun cannot enter through an open front door
-  const landing = new THREE.Mesh(new THREE.BoxGeometry(1.9, 3.7, 2.37), new THREE.MeshStandardMaterial({ color:0x8a8780, roughness:1, colorWrite:false, depthWrite:false, side:THREE.DoubleSide }));
-  landing.position.set(wx(635), 1.55 - 3.28, wz(1031.7)); landing.castShadow = true; landing.raycast = () => {}; roof.add(landing);
+  const landing = new THREE.Mesh(new THREE.BoxGeometry(1.9, 3.5, 2.37), new THREE.MeshStandardMaterial({ color:0x8a8780, roughness:1, colorWrite:false, depthWrite:false, side:THREE.DoubleSide }));
+  landing.position.set(wx(635), 1.55 - 3.06, wz(1031.7)); landing.castShadow = true; landing.raycast = () => {}; roof.add(landing);
 }
 { const ov = gtao.overrideVisibility.bind(gtao), rv = gtao.restoreVisibility.bind(gtao); let was = false;
   let gw = false;
@@ -3227,10 +3291,10 @@ function sunLabel(t) { const m = Math.round((7 + 12 * t) * 4) / 4, h = Math.floo
 const _sunC = new THREE.Color();
 function sunLight(d) { return { intensity:NIGHT ? 0 : 6 + 3 * d.y, color:_sunC.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y) }; }
 const GI = (() => {
-  const cfg = IS_MOBILE ? { step:.5, ny:6, rw:8, rh:8, dt:10, iters:44 } : { step:.4, ny:7, rw:12, rh:8, dt:16, iters:56 };
+  const cfg = IS_MOBILE ? { step:.5, ny:6, rw:8, rh:8, dt:10, iters:44 } : { step:.4, ny:7, rw:14, rh:10, dt:16, iters:64 };
   Object.assign(cfg, { expK:5, lRef:.08, expP:.75, wb:.6, tooSlow:160 });   // exposure expK where a white wall would read lRef; how far it and the white balance adapt; ms a round may take
   const st = { on:false, failed:!renderer.capabilities.isWebGL2, exposure:8, cfg, n:0, todo:0, tris:0, ms:0, rev:0 };
-  const X0 = -40, Y0 = -46, X1 = 1104, Y1 = 903, H0 = .3, H1 = 3.12;    // plan cm / metres: the flat including its outer walls
+  const X0 = -40, Y0 = -46, X1 = 1104, Y1 = 903, H0 = .3, H1 = 2.92;    // plan cm / metres: the flat including its outer walls
   const SKY = 3.5 * .8, USABLE = 14;                                    // sky brightness (× glass)
   let lib = null, loading = false, bvhU = null, colTex = null, T = null, P = null, nx = 0, ny = 0, nz = 0;
   let ready = false, away = false, tick = 0, turn = 0, every = 1, cold = true, depTodo = 0, builtSig = null, seenSig = 0, lightSig = null, lastCheck = 0, probes = null, warm = false;
@@ -3633,36 +3697,31 @@ const GI = (() => {
   }
   // The eye adapts to what it looks at (no dt: at once): exposure follows the metered brightness, and most of the colour
   // cast that light picks up bouncing between warm surfaces is balanced out, as eyes and cameras do.
+  const livPoly = PLAN.rooms.find(r => r.id === 'liv').poly;
   function expose(dt) {
     if (dt === undefined || (++tick % 3) === 0) meter();
     const k = dt === undefined ? 1 : 1 - Math.exp(-dt / .4), wb = NIGHT ? .35 : cfg.wb, r = Math.pow(met.r, -wb), b = Math.pow(met.b, -wb), n = 1 / (.2126 * r + .7152 + .0722 * b);
     GIU.giTint.value.lerp(_t.set(r * n, n, b * n), k);
     const c = sunLight(sunDir(SUN_T)).color, w = GIU.giTint.value; sun.color.setRGB(c.r * w.x, c.g * w.y, c.b * w.z);
-    return st.exposure += (THREE.MathUtils.clamp(cfg.expK * Math.pow((NIGHT ? .09 : cfg.lRef) / met.L, NIGHT ? .5 : cfg.expP) * (NIGHT ? Math.pow(Math.max(LAMP_DIM, .05), .35) : 1), 2, 30) - st.exposure) * k;
+    const inLiv = inPoly([persp.position.x / S + CX, persp.position.z / S + CY], livPoly);
+    return st.exposure += (THREE.MathUtils.clamp(cfg.expK * Math.pow((NIGHT ? .09 : cfg.lRef) / met.L, NIGHT ? .5 : cfg.expP) * (NIGHT && inLiv ? Math.pow(Math.max(LAMP_DIM, .05), .35) : 1), 2, 30) - st.exposure) * k;
   }
   if (!IS_MOBILE) setTimeout(() => { warm = true; }, 1500);   // desktop opens in 3D: get the probes ready in the background
   return Object.assign(st, { frame, expose, peek:() => ({ bvh, col, parts, met }) });
 })();
 function applyQuality(rebuild = true) {
-  const size = HQ ? (IS_MOBILE ? 2048 : 3072) : (IS_MOBILE ? 1024 : 2048);
+  const size = IS_MOBILE ? 2048 : 3072;
   if (sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
-  if (HQ) {
-    const d = sunDir(SUN_T);
-    sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.4 + 1.2 * d.y;
-    sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
-    hemi.intensity = .5; renderer.toneMappingExposure = 1.12;
-    sky.material.uniforms.sunPosition.value.copy(d);
-    sun.shadow.normalBias = .03; sun.shadow.bias = -.0005;
-  } else {
-    sun.position.set(4, 18, 7); sun.intensity = .8; sun.color.set(0xfff1dc);
-    hemi.intensity = .85; renderer.toneMappingExposure = 1.05;
-    sun.shadow.normalBias = .02; sun.shadow.bias = -.0004;
-  }
+  const d = sunDir(SUN_T);
+  sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.4 + 1.2 * d.y;
+  sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
+  hemi.intensity = .5; renderer.toneMappingExposure = 1.12;
+  sky.material.uniforms.sunPosition.value.copy(d);
+  sun.shadow.normalBias = .03; sun.shadow.bias = -.0005;
   applyLight();
-  $('q-std').classList.toggle('on', !HQ); $('q-hq').classList.toggle('on', HQ);
-  $('sun-row').hidden = !HQ || NIGHT; $('sun').value = Math.round(SUN_T * 100); $('sun-lbl').textContent = sunLabel(SUN_T);
+  $('sun-row').hidden = NIGHT; $('sun').value = Math.round(SUN_T * 100); $('sun-lbl').textContent = sunLabel(SUN_T);
   renderer.shadowMap.needsUpdate = true;
-  try { localStorage.setItem('irnerio-quality', JSON.stringify({ hq:HQ, sun:SUN_T })); } catch {}
+  try { localStorage.setItem('irnerio-quality', JSON.stringify({ sun:SUN_T })); } catch {}
   if (rebuild) rebuildCuttable();
 }
 /* ---- daylight interior (Cammina): light only through the windows ----
@@ -3857,9 +3916,8 @@ function applyLight() {
   // sun shadows: sharp where something touches the floor, softer the farther the edge that casts them (a window head, a
   // curtain); the sun taken about twice its real width, as through a thin haze. Desktop only: it costs a few more samples
   { const c = sun.shadow.camera, texel = (c.right - c.left) / sun.shadow.mapSize.x;
-    GIU.psOn.value = gi && !IS_MOBILE ? 1 : 0; GIU.psK.value.set((c.far - c.near) * .011 / texel, 1.2, HQ ? 13 : 9); }
+    GIU.psOn.value = gi && !IS_MOBILE ? 1 : 0; GIU.psK.value.set((c.far - c.near) * .011 / texel, 1.2, 13); }
   roof.visible = INSIDE;                                    // the lid only at eye level: the dollhouse views stay sunlit from above
-  G.walls.traverse(o => { if (o.isMesh && o.material !== M.glass) o.castShadow = HQ || INSIDE; });
   if (NIGHT) {                                              // no sun, a trace of sky: the lamps do the rest (see NL)
     sun.intensity = 0;
     for (const sp of WIN_LIGHTS) sp.intensity *= .004;
@@ -3874,7 +3932,7 @@ function applyLight() {
    square views per lamp holding distances, drawn again a few views a frame whenever something moves (a door, a piece
    of furniture) — the same moments the sun's shadows are redrawn. A lamp is lit by a click (see lampAt / toggleLamp);
    rooms with no lamp of their own get a bare bulb on a cord, as a flat has before its fittings are chosen. */
-const bulbG = new THREE.Group(), lampHitG = new THREE.Group(); bulbG.visible = lampHitG.visible = false; scene.add(bulbG, lampHitG);
+const lampHitG = new THREE.Group(); lampHitG.visible = false; scene.add(lampHitG);
 const NL = (() => {
   const st = { sig:0, ok:false, dirty:false, pts:[] };
   let TILE = IS_MOBILE ? 128 : 256, rt = null, seenRev = -1, stamp = 1, cur = null, next = 0, quiet = false, saved = null;
@@ -3938,10 +3996,11 @@ const NL = (() => {
   const hitMat = new THREE.MeshBasicMaterial({ visible:false });
   function apply() {                                // on / off → the glowing parts and the lights' colours
     // by day the lamps are off. By night: the colour of the chosen temperature (parts that glow keep their own tint,
-    // shifted by as much as the light moved from 2700 K), everything scaled by the dimmer
-    const kc = kelvinRGB(LAMP_T), k0 = kelvinRGB(2700), tint = [kc[0] / k0[0], kc[1] / k0[1], kc[2] / k0[2]], gd = Math.pow(LAMP_DIM, .6);
+    // shifted by as much as the light moved from 2700 K); only living-room fixtures (dim: true) follow the dimmer
+    const kc = kelvinRGB(LAMP_T), k0 = kelvinRGB(2700), tint = [kc[0] / k0[0], kc[1] / k0[1], kc[2] / k0[2]];
     for (const L of all()) {
-      const lit = NIGHT && LAMP_DIM > 0 && !LAMP_OFF.has(L.id);
+      const dim = L.k.dim ? LAMP_DIM : 1, gd = Math.pow(dim, .6);
+      const lit = NIGHT && dim > 0 && !LAMP_OFF.has(L.id);
       for (const g of L.glow) {
         if (g.c) { g.m.color.copy(g.c); if (lit) { g.m.color.r *= tint[0] * gd; g.m.color.g *= tint[1] * gd; g.m.color.b *= tint[2] * gd; } else g.m.color.multiplyScalar(NIGHT ? .05 : .3); }
         else { g.m.emissiveIntensity = lit ? g.e * (L.k.glow || 1.5) * gd : 0; g.m.emissive.copy(g.em); g.m.emissive.r *= tint[0]; g.m.emissive.g *= tint[1]; g.m.emissive.b *= tint[2]; }
@@ -3949,7 +4008,8 @@ const NL = (() => {
       for (const w of L.wash) w.visible = false;
     }
     st.pts.forEach((pt, i) => {
-      const on = NIGHT && !LAMP_OFF.has(pt.L.id) && (pt.have >= 0 || !st.ok), v = on ? pt.L.k.I * LAMP_DIM : 0;
+      const dim = pt.L.k.dim ? LAMP_DIM : 1;
+      const on = NIGHT && !LAMP_OFF.has(pt.L.id) && (pt.have >= 0 || !st.ok), v = on ? pt.L.k.I * dim : 0;
       if (pt.L.k.color) { _c.set(pt.L.k.color); NLU.nlCol.value[i].set(_c.r * tint[0] * v, _c.g * tint[1] * v, _c.b * tint[2] * v); }
       else NLU.nlCol.value[i].set(kc[0] * v, kc[1] * v, kc[2] * v);
     });
@@ -4039,47 +4099,25 @@ function skyLevel() {                              // the sky as the probes and 
   if (NIGHT) { GIU.giSkyT.value.setRGB(.004, .007, .017); GIU.giSkyB.value.setRGB(.014, .012, .01); GIU.giFloor.value = .002; }   // deep blue above, a trace of the city's glow low down
   else { GIU.giSkyT.value.set(0xcfe0f2).multiplyScalar(2.8); GIU.giSkyB.value.set(0xe8dcc6).multiplyScalar(2.8); GIU.giFloor.value = .008; }
 }
-// A bare bulb on a cord in the middle of every room that has no lamp of its own (night only).
-function buildBulbs() {
-  if (bulbG.userData.built) return;
-  bulbG.userData.built = true;
-  const white = new THREE.MeshStandardMaterial({ color:0xf2f0ea, roughness:.6 }), black = new THREE.MeshStandardMaterial({ color:0x1c1c1c, roughness:.7 });
-  const glass = new THREE.MeshStandardMaterial({ color:0xfffaf0, roughness:.35, emissive:0xffd9a6, emissiveIntensity:2.2 });
-  const rc = new THREE.Raycaster(), up = new THREE.Vector3(0, 1, 0), drop = .24;
-  const REACH = { bed1:8, bed2:7.5, bath1:5.5, bath2:5.5, util:4.5, corr:5.5 };
-  for (const id of Object.keys(REACH)) {
-    const r = PLAN.rooms.find(q => q.id === id); if (!r) continue;
-    const [x, y] = cen(r.poly), f = lvl(x, y) * S;
-    rc.set(new THREE.Vector3(wx(x), f + 1.3, wz(y)), up); rc.far = 4;
-    const hit = rc.intersectObjects([G.ceilings, G.hvac, G.fittings, G.walls].filter(Boolean), true).find(h => h.object.isMesh);
-    const g = new THREE.Group(); g.position.set(wx(x), hit ? hit.point.y : r.h * S, wz(y));
-    const add = (geo, mat, py) => { const m = new THREE.Mesh(geo, mat); m.position.y = py; g.add(m); return m; };
-    add(new THREE.CylinderGeometry(.045, .05, .022, 32), white, -.011);                         // ceiling rose
-    add(new THREE.CylinderGeometry(.0025, .0025, drop, 6), black, -.022 - drop / 2);            // cord
-    add(new THREE.CylinderGeometry(.016, .02, .05, 20), black, -.022 - drop - .025);            // lampholder
-    add(new THREE.SphereGeometry(.03, 24, 16), glass, -.022 - drop - .05 - .026).scale.y = 1.2; // the bulb
-    bulbG.add(g);
-    lampReg('bulb-' + id, [g], { src:mt => mt === glass, I:.04, lobe:[1, 0, 0, 0], reach:REACH[id], glow:1, grab:.17 }, BULBS);
-  }
-}
-// The recessed spots of the flat (owner): one in the false ceiling of the small lobby between the front door and the
-// entrance unit, one over the kitchen. A white trim ring flush with the ceiling, a short white baffle and the lit lens
-// set back in it; everything faces down, so nothing shows from above in the dollhouse views. Always there, lit by night.
+// Slim flat round white LED ceiling lights (Ø 14 × h 2.2 cm) across the central false-ceiling block:
+// entrance, kitchen, bathrooms, laundry and hallway. Always present on the ceilings, lit and clickable by night.
 const spotG = new THREE.Group(); scene.add(spotG);
 function buildSpots() {
   spotG.userData.built = true;
-  const white = new THREE.MeshStandardMaterial({ color:0xf4f3ef, roughness:.5 }), inner = new THREE.MeshStandardMaterial({ color:0xf4f3ef, roughness:.6, side:THREE.BackSide });
-  const lens = new THREE.MeshStandardMaterial({ color:0xfff6e6, roughness:.4, emissive:0xffe0b0, emissiveIntensity:1.4 });
-  const rc = new THREE.Raycaster(), up = new THREE.Vector3(0, 1, 0);
-  for (const [id, x, y] of [['entry', 633, 800], ['kit', 633, 487]]) {
-    const f = lvl(x, y) * S; rc.set(new THREE.Vector3(wx(x), f + 1.3, wz(y)), up); rc.far = 4;
-    const hit = rc.intersectObjects([G.ceilings], true).find(h => h.object.isMesh), r = PLAN.rooms.find(q => q.id === id);
-    const g = new THREE.Group(); g.position.set(wx(x), hit ? hit.point.y : r.h * S, wz(y));
-    const ring = new THREE.Mesh(new THREE.RingGeometry(.031, .043, 48), white); ring.rotation.x = Math.PI / 2; ring.position.y = -.0015; g.add(ring);
-    const baffle = new THREE.Mesh(new THREE.CylinderGeometry(.024, .031, .022, 40, 1, true), inner); baffle.position.y = .0095; g.add(baffle);
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(.024, 40), lens); disc.rotation.x = Math.PI / 2; disc.position.y = .02; g.add(disc);
+  const housing = new THREE.MeshStandardMaterial({ color:0xf6f6f3, roughness:.42, metalness:.05 });
+  const lens = new THREE.MeshStandardMaterial({ color:0xfcfaf5, roughness:.35, emissive:0xffe2b5, emissiveIntensity:1.5 });
+  for (const [id, x, y, reach] of [
+    ['entry', 633, 800, 6], ['kit', 633, 487, 7],
+    ['bath1', 436, 140, 5.5], ['bath2', 610, 140, 5.5],
+    ['util', 436, 355, 4.5], ['corr', 436, 480, 5.5],
+  ]) {
+    const r = PLAN.rooms.find(q => q.id === id); if (!r) continue;
+    const g = new THREE.Group(); g.position.set(wx(x), r.h * S, wz(y));
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, .022, 48), housing); body.position.y = -.011; g.add(body);
+    const rim = new THREE.Mesh(new THREE.RingGeometry(.058, .07, 48), housing); rim.rotation.x = Math.PI / 2; rim.position.y = -.0223; g.add(rim);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(.059, 48), lens); disc.rotation.x = Math.PI / 2; disc.position.y = -.022; g.add(disc);
     spotG.add(g);
-    lampReg('spot-' + id, [g], { src:mt => mt === lens, I:.12, lobe:[.008, 0, 1, .45], reach:7, off:[0, -5, 0], grab:.16 }, BULBS);   // a wide beam straight down, lamp point just under the ceiling
+    lampReg('spot-' + id, [g], { src:mt => mt === lens, I:.1, lobe:[.04, 0, 1, .28], reach, off:[0, -5, 0], grab:.2 }, BULBS);
   }
 }
 function toggleLamp(id) { if (LAMP_OFF.has(id)) LAMP_OFF.delete(id); else LAMP_OFF.add(id); NL.apply(); }
@@ -4087,24 +4125,26 @@ function setNight(on) {
   if (NIGHT === on) return;
   NIGHT = on;
   $('l-day').classList.toggle('on', !on); $('l-night').classList.toggle('on', on); $('night-tip').hidden = $('lt-row').hidden = $('ld-row').hidden = !on;
-  if (on) { buildBulbs(); NL.init(); }
-  bulbG.visible = lampHitG.visible = on;
-  M.glass.color.setHex(0xa9cbd8).multiplyScalar(on ? .2 : 1);       // lamplight on the panes: a dark window, not a milky one
+  if (on) NL.init();
+  lampHitG.visible = on;
+  M.glass.color.setHex(0xd2e6ee).multiplyScalar(on ? .18 : 1);       // lamplight on the panes: a dark reflective window, not a milky one
   skyLevel(); applyTheme(); NL.apply(); applyQuality(false);
 }
-// The thin outlines of the furniture and the door arcs are drawn unlit: at night the exposure that suits lamplight
-// would turn them into white wires, so they are dimmed by as much.
+// The thin outlines of the furniture and the door arcs are architectural aids for 3D / Pianta: hide them in Cammina
+// for a clean photographic view, and dim them at night so exposure never turns them into white wires.
 let edgeK = 1;
 function nightEdges() {
   if (!spotG.userData.built) buildSpots();
   spotG.visible = G.ceilings.visible;
+  edgeMat.visible = !INSIDE;
+  arcMat.visible = !INSIDE;
   const k = NIGHT ? Math.min(1, 1.05 / renderer.toneMappingExposure) : 1;
   if (k === edgeK) return;
   edgeK = k; edgeMat.color.setHex(0x6b7470).multiplyScalar(k); arcMat.color.setHex(0x6b7470).multiplyScalar(k);
 }
 // Around the dollhouse at night: a dark blue. In Alta the whole frame, background included, goes through the exposure.
 function nightBackground() {
-  if (NIGHT && !INSIDE && scene.background && scene.background.isColor) scene.background.setHex(0x101624).multiplyScalar(HQ && cam === persp ? 1 / renderer.toneMappingExposure : 1);
+  if (NIGHT && !INSIDE && scene.background && scene.background.isColor) scene.background.setHex(0x101624).multiplyScalar(cam === persp ? 1 / renderer.toneMappingExposure : 1);
 }
 function lampUI(save) {
   const i = Math.max(0, LAMP_K.findIndex(k => k[0] === LAMP_T));
@@ -4119,8 +4159,6 @@ $('ld').oninput = e => { LAMP_DIM = e.target.value / 100; lampUI(true); };
 $('l-day').onclick = () => setNight(false);
 $('l-night').onclick = () => setNight(true);
 
-$('q-std').onclick = () => { HQ = false; applyQuality(); buildDoors(); };   // doors: mirror resolution follows quality
-$('q-hq').onclick = () => { HQ = true; applyQuality(); buildDoors(); };
 $('sun').oninput = e => { SUN_T = e.target.value / 100; applyQuality(false); };
 applyQuality(true);
 
@@ -4179,7 +4217,13 @@ renderer.setAnimationLoop(() => {
   NL.frame(); GI.frame(dt); RF.frame();
   sky.visible = INSIDE && !NIGHT; nightSky.visible = INSIDE && NIGHT; nightEdges(); nightBackground();
   if (INSIDE && GI.failed && renderer.shadowMap.needsUpdate) windowShadowPass();
-  if (HQ && cam === persp) composer.render(); else renderer.render(scene, cam);
+  if (cam === persp) {
+    const exp = Math.max(renderer.toneMappingExposure, .5);
+    bloom.threshold = (NIGHT ? 1.45 : 1.3) / exp;
+    bloom.strength = NIGHT ? (INSIDE ? .14 : .11) : (INSIDE ? .08 : .035);
+    bloom.radius = NIGHT ? .62 : .48;
+    composer.render();
+  } else renderer.render(scene, cam);
   labelRenderer.render(scene, cam);
   p0.set(0, 0, 0).project(cam); p1.set(0, 0, -1).project(cam);
   renderer.getSize(sz);

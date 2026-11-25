@@ -33,20 +33,14 @@
         </div>
       </section>
       <section>
-        <h2>Qualità</h2>
-        <div class="seg" role="group" aria-label="Qualità">
-          <button id="q-std">Standard</button>
-          <button id="q-hq">Alta</button>
-        </div>
-        <div class="seg" role="group" aria-label="Luce" style="margin-top:8px">
+        <h2>Luce</h2>
+        <div class="seg" role="group" aria-label="Luce">
           <button id="l-day" class="on">Giorno</button>
           <button id="l-night">Notte</button>
         </div>
         <p id="night-tip" hidden style="margin:6px 0 0;font-size:11.5px;line-height:1.35;color:var(--muted)">Clic su una lampada per accenderla o spegnerla.</p>
         <label class="sunrow" id="lt-row" for="lt" hidden><span>Lampadine · <b id="lt-lbl">2700 K · bianco caldo</b></span>
           <input type="range" id="lt" min="0" max="5" step="1" value="1" aria-label="Temperatura di colore delle lampadine"></label>
-        <label class="sunrow" id="ld-row" for="ld" hidden><span>Dimmer, tutte le luci · <b id="ld-lbl">100%</b></span>
-          <input type="range" id="ld" min="0" max="100" step="5" value="100" aria-label="Intensità di tutte le luci"></label>
         <label class="sunrow" id="sun-row" for="sun"><span>Sole · <b id="sun-lbl">ore 10</b></span>
           <input type="range" id="sun" min="0" max="100" value="30" aria-label="Posizione del sole"></label>
       </section>
@@ -75,7 +69,9 @@
       <section class="rooms">
         <h2 class="rh">Stanze · <span id="rooms-ctx">tutta la casa</span><button id="rooms-all" class="mini" type="button" title="Mostra le opzioni di tutte le stanze">Tutte</button></h2>
         <p id="rooms-none" class="rnone" hidden></p>
-        <details class="room" data-room="sogg"><summary>Soggiorno <span class="rsum" id="rsum-sogg"></span></summary><div class="fsel" id="room-sogg"></div></details>
+        <details class="room" data-room="sogg"><summary>Soggiorno <span class="rsum" id="rsum-sogg"></span></summary><div class="fsel" id="room-sogg"></div>
+          <label class="sunrow" id="ld-row" for="ld" hidden style="margin:0 0 12px"><span>Dimmer luci soggiorno · <b id="ld-lbl">100%</b></span>
+            <input type="range" id="ld" min="0" max="100" step="5" value="100" aria-label="Intensità luci soggiorno"></label></details>
         <details class="room" data-room="pranzo"><summary>Zona pranzo <span class="rsum" id="rsum-pranzo"></span></summary><div class="fsel" id="room-pranzo"></div></details>
         <details class="room" data-room="cucina"><summary>Cucina <span class="rsum" id="rsum-cucina"></span></summary><div class="fsel" id="room-cucina"></div></details>
         <details class="room" data-room="cam1"><summary>Camera 1 <span class="rsum" id="rsum-cam1"></span></summary><div class="fsel" id="room-cam1"></div></details>
