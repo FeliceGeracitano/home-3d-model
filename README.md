@@ -1,48 +1,49 @@
 # Home 3D model
 
-Modello 3D interattivo di un appartamento, fatto con [Three.js](https://threejs.org/).
-Viste 3D, Pianta e Cammina, scelta di arredi e finiture, luce di giorno con l'ora del sole e modalità Notte
-con le lampade accendibili una per una (temperatura di colore e dimmer).
+Interactive 3D model of an apartment, built with [Three.js](https://threejs.org/).
+3D, floor-plan and walk-through views, a choice of furniture and finishes, daylight that follows the time of day,
+and a night mode where each lamp can be switched on and off (with colour temperature and a dimmer).
 
-## Requisiti
+## Requirements
 
-- Node.js 18 o superiore (consigliato 20, vedi `.nvmrc`)
+- Node.js 18 or later (20 recommended, see `.nvmrc`)
 
-## Comandi
+## Commands
 
 ```bash
-npm install        # installa le dipendenze (una volta)
-npm run dev        # sviluppo in locale su http://localhost:5173, con ricarica automatica
-npm run build      # build di produzione nella cartella dist/
-npm run preview    # serve la build di dist/ su http://localhost:4173, per controllarla
+npm install        # install dependencies (once)
+npm run dev        # local development at http://localhost:5173, with live reload
+npm run build      # production build into dist/
+npm run preview    # serve the dist/ build at http://localhost:4173, to check it
 ```
 
-## Struttura
+## Structure
 
 ```
-index.html            pagina e menu
-src/main.js           tutta la scena: pianta, muri, arredi, luci, interazioni
-src/style.css         stile del menu e dei pannelli
-src/assets/           texture (parquet, gres Calacatta Viola)
-vite.config.js        configurazione di Vite
-amplify.yml           build per AWS Amplify Hosting
+index.html            page and menu
+src/main.js           the whole scene: plan, walls, furniture, lights, interactions
+src/style.css         styles for the menu and panels
+src/assets/           textures (parquet, Calacatta Viola porcelain)
+vite.config.js        Vite configuration
+amplify.yml           build settings for AWS Amplify Hosting
 ```
 
-`src/main.js` è un unico file grande (circa 4.600 righe): è il codice del modello così com'è nato, non ancora
-diviso in moduli.
+`src/main.js` is a single large file (about 4,600 lines): it is the model's code as it grew, not yet split into
+modules.
 
-## Deploy su AWS Amplify
+## Deploying to AWS Amplify
 
-Il file `amplify.yml` è già pronto: Amplify esegue `npm ci` e `npm run build` e pubblica la cartella `dist/`.
+`amplify.yml` is ready to use: Amplify runs `npm ci` and `npm run build`, then publishes the `dist/` folder.
 
-1. In Amplify Hosting crea una nuova app e collega questa repository e il branch da pubblicare.
-2. Amplify legge `amplify.yml` da solo: non serve cambiare le impostazioni di build.
-3. Ogni push sul branch collegato fa partire una nuova build.
+1. In Amplify Hosting, create a new app and connect this repository and the branch to publish.
+2. Amplify picks up `amplify.yml` on its own: no build settings need changing.
+3. Every push to the connected branch starts a new build.
 
-La build usa percorsi relativi (`base: './'` in `vite.config.js`), quindi funziona anche in una sottocartella.
+The build uses relative paths (`base: './'` in `vite.config.js`), so it also works from a subfolder.
 
-## Note
+## Notes
 
-- Le scelte fatte nel menu (arredi, colori, qualità, luci) restano salvate nel browser (`localStorage`).
-- I font arrivano da Google Fonts; tutto il resto è nella build.
-- Il modello contiene le misure reali della casa: valuta se tenere privata la repository e protetto il sito.
+- Choices made in the menu (furniture, colours, quality, lights) are saved in the browser (`localStorage`).
+- Fonts are loaded from Google Fonts; everything else is in the build.
+- The interface is in Italian.
+- The model holds the real measurements of a home: consider keeping the repository private and the site protected.
