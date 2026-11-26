@@ -6,7 +6,7 @@
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| Node.js | 26 | Pinned in `.nvmrc` and in `engines` in `package.json` |
+| Node.js | 20 LTS | Pinned in `.nvmrc` and in `engines` in `package.json` (`>=20`) |
 | npm | bundled with Node.js | Uses `package-lock.json` |
 | [Bun](https://bun.sh/) | optional | Alternative to npm, uses `bun.lock` |
 
