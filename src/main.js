@@ -15,6 +15,31 @@ import TUNDRA_JPG from './assets/tundra.jpg';
 import VIOLA_JPG from './assets/calacatta-viola.jpg';
 import VIOLA_THUMB_JPG from './assets/calacatta-viola-thumb.jpg';
 
+const LOADER = (() => {
+  const el = document.getElementById('loader'), fill = document.getElementById('ld-fill'), msg = document.getElementById('ld-msg'), pct = document.getElementById('ld-pct');
+  let gone = false;
+  const set = (p, t) => {
+    if (!el || gone) return;
+    if (fill) { fill.style.animation = 'none'; fill.style.width = Math.min(100, Math.max(0, p)) + '%'; }
+    if (pct) pct.textContent = Math.round(p) + '%';
+    if (msg && t) msg.textContent = t;
+  };
+  const step = (p, t) => { set(p, t); return new Promise(r => requestAnimationFrame(r)); };
+  const done = () => {
+    if (!el || gone) return;
+    gone = true;
+    if (fill) { fill.style.animation = 'none'; fill.style.width = '100%'; }
+    if (pct) pct.textContent = '100%';
+    if (msg) msg.textContent = 'Pronto';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.classList.add('done');
+      setTimeout(() => el.remove(), 540);
+    }));
+  };
+  set(38, 'Preparazione materiali e luci…');
+  return { set, step, done };
+})();
+
 /* =====================================================================
    PLAN — all values in CENTIMETRES, traced from the architect's vector
    PDF (IRN 260410 esecutivo, sheet E.03 "pianta quotata", 1:50).
@@ -302,15 +327,21 @@ vec3 giIrradiance(vec3 P, vec3 N, vec3 V) {
   vec3 bp = P + N * 0.07 + V * 0.05;              // step off the surface before asking the probes
   vec2 on = giOct(N);
   vec4 r = giCell(P, N, bp, on);
-  if (r.a < 1e-8) {                               // all 8 probes buried (tight niche / above tall cabinet / below grid): step out into open air
-    vec4 r2 = giCell(P, N, bp + N * giStep.x, on);
-    if (r2.a > r.a) r = r2;
-    if (r.a < 1e-8) {
-      vec4 r3 = giCell(P, N, bp + V * (1.6 * giStep.x), on);
+  if (r.a < 0.018) {                              // weak/occluded probe cell (tight cabinet/niche): smoothly blend with open-air cell along +N
+    vec4 r2 = giCell(P, N, bp + N * (0.75 * giStep.x), on);
+    if (r2.a > 1e-8) {
+      float k = smoothstep(0.0, 0.018, r.a);
+      vec3 e1 = r.a > 1e-9 ? r.rgb / r.a : r2.rgb / r2.a;
+      vec3 e2 = r2.rgb / r2.a;
+      float w = max(r.a, r2.a);
+      r = vec4(mix(e2, e1, k) * w, w);
+    }
+    if (r.a < 1e-6) {
+      vec4 r3 = giCell(P, N, bp + V * (1.5 * giStep.x), on);
       if (r3.a > r.a) r = r3;
     }
     if (r.a < 1e-8) {
-      vec4 r4 = giCell(P, N, bp + V * (2.6 * giStep.x), on);
+      vec4 r4 = giCell(P, N, bp + V * (2.5 * giStep.x), on);
       if (r4.a > r.a) r = r4;
     }
   }
@@ -1280,7 +1311,8 @@ const ENTRY_DOORS = [                     // x0, x1: door edges; hinge side; han
 ];
 function buildEntryWardrobe() {
   const L = lvl(633, 717), YB = 698, YF = 733, T = 1.8, H = 236.4;              // wall face, frame front, panel, PAX height
-  const pan = (x0, x1, y0, y1, z0, z1, m = IKW) => prism(R(x0, x1, y0, y1), L + z0, L + z1, m, G.fittings, { edges:false });
+  const wg = new THREE.Group(); wg.userData.noGI = true; G.fittings.add(wg);    // keep tight 35 cm cabinet interiors out of coarse GI probe BVH (GTAO handles real contact shadows)
+  const pan = (x0, x1, y0, y1, z0, z1, m = IKW) => prism(R(x0, x1, y0, y1), L + z0, L + z1, m, wg, { edges:false });
   const matCache = new Map();
   const sMat = (col, rough = .75, extra = {}) => {
     const k = `${col}|${rough}|${extra.metalness || 0}|${extra.diffuseRoughness || 0}|${extra.clearcoat || 0}`;
@@ -1289,7 +1321,7 @@ function buildEntryWardrobe() {
   };
   const place = (m, x, y, z, rx = 0, ry = 0, rz = 0, cast = false) => {
     m.position.set(wx(x), (L + z) * S, wz(y)); m.rotation.set(rx, ry, rz);
-    m.castShadow = cast; m.receiveShadow = true; G.fittings.add(m); return m;
+    m.castShadow = cast; m.receiveShadow = true; wg.add(m); return m;
   };
   const pageMat = sMat(0xf2ede3, .92, { diffuseRoughness:.8 });
   const leatherMat = sMat(0x8a5430, .48, { clearcoat:.18, clearcoatRoughness:.45 });
@@ -1305,7 +1337,7 @@ function buildEntryWardrobe() {
     addB(new RoundedBoxGeometry(w * S, .32 * S, d * S, 2, .001), cov, 0, h - .16, 0);              // top cover
     addB(new RoundedBoxGeometry(.4 * S, h * S, d * S, 2, .0012), cov, -w / 2 + .2, h / 2, 0);      // spine
     addB(new THREE.BoxGeometry((w - .7) * S, (h - .6) * S, (d - .6) * S), pageMat, .2, h / 2, 0);  // pages
-    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = rot; G.fittings.add(g);
+    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = rot; wg.add(g);
   };
   // linen storage box with overhang lid, stitched leather pull tab and brass label frame
   const storageBox = (x0, x1, y0, y1, z0, h, col) => {
@@ -1323,43 +1355,43 @@ function buildEntryWardrobe() {
     const card = new THREE.Mesh(new THREE.BoxGeometry(4.6 * S, 1.9 * S, .36 * S), pageMat);
     place(card, cx, y1 - .12, z0 + h * .64);
   };
-  // sculpted hanging coat on a wooden hanger (shoulders, tapered body with hem folds, two sleeves, lapel collar, chrome hook)
+  // sculpted hanging coat on a wooden hanger (curved shoulder yoke, draped torso, tucked sleeves, lapel collar, chrome hook)
   const coat = (cx, cy, topZ, len, col) => {
     if (L + topZ > CUT) return;
     const g = new THREE.Group();
     const cm = sMat(col, .94, { diffuseRoughness:.86, sheen:.35, sheenRoughness:.75, sheenColor:0xddd8d0, bumpMap:wovenTex, bumpScale:.55 });
-    const addM = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0, cast = true) => {
+    const addM = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0) => {
       const o = new THREE.Mesh(geo, m); o.position.set(x * S, y * S, z * S); o.rotation.set(rx, ry, rz);
-      o.castShadow = cast; o.receiveShadow = true; g.add(o); return o;
+      o.castShadow = false; o.receiveShadow = true; g.add(o); return o;
     };
     // hook & wooden hanger
     const hook = new THREE.TorusGeometry(1.5 * S, .2 * S, 8, 18, Math.PI * 1.45);
-    addM(hook, chrome, 0, 2.2, 0, 0, Math.PI / 2, -.2, false);
-    addM(new THREE.CylinderGeometry(.2 * S, .2 * S, 2.2 * S, 8), chrome, 0, .5, 0, 0, 0, 0, false);
-    for (const sx of [-1, 1]) addM(new THREE.CylinderGeometry(.55 * S, .65 * S, 19 * S, 10), woodHangerMat, sx * 9, -2.5, 0, 0, 0, sx * 1.28, false);
-    // sloped shoulders + draped torso (rounded at shoulders, softly flared & gently pleated at hem)
-    const torso = new THREE.CylinderGeometry(16 * S, 20.5 * S, len * S, 24, 6);
+    addM(hook, chrome, 0, 2.2, 0, 0, Math.PI / 2, -.2);
+    addM(new THREE.CylinderGeometry(.2 * S, .2 * S, 2.2 * S, 8), chrome, 0, .5, 0);
+    for (const sx of [-1, 1]) addM(new THREE.CylinderGeometry(.55 * S, .65 * S, 18 * S, 10), woodHangerMat, sx * 8.6, -2.5, 0, 0, 0, sx * 1.26);
+    // smooth rounded shoulder yoke seamlessly joining torso & sleeves
+    const yoke = new THREE.SphereGeometry(17.2 * S, 24, 14, 0, Math.PI * 2, 0, Math.PI * .55);
+    yoke.scale(1, .34, .21);
+    addM(yoke, cm, 0, -9.2, 0);
+    // draped torso with gentle hem flare and natural vertical cloth folds
+    const torso = new THREE.CylinderGeometry(14.8 * S, 19.5 * S, (len - 4) * S, 24, 6);
     const P = torso.attributes.position;
     for (let i = 0; i < P.count; i++) {
-      const x = P.getX(i), y = P.getY(i), z = P.getZ(i), t = .5 - y / (len * S); // 0 top → 1 hem
-      const flatZ = z * (.20 + .06 * Math.sin(x * 38) * t);
-      const sx = x * (1.02 - .14 * (1 - t) * (1 - t));
-      const sy = y - Math.pow(Math.abs(x) / .16, 1.8) * .042 * (1 - t); // smooth curved shoulder drop
-      P.setXYZ(i, sx, sy, flatZ);
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i), t = .5 - y / ((len - 4) * S); // 0 top → 1 hem
+      const flatZ = z * (.20 + .055 * Math.sin(x * 36) * t);
+      P.setXYZ(i, x, y, flatZ);
     }
     torso.computeVertexNormals();
-    addM(torso, cm, 0, -4 - len / 2, 0);
+    addM(torso, cm, 0, -8 - (len - 4) / 2, 0);
     // lapel collar around neck
-    const collar = new THREE.TorusGeometry(5.2 * S, 1.5 * S, 10, 20, Math.PI * 1.35);
-    addM(collar, cm, 0, -3.5, 0, Math.PI / 2 + .2, 0, Math.PI * .82, false);
-    // two hanging sleeves with rounded shoulder caps tucked softly along the sides
+    const collar = new THREE.TorusGeometry(4.8 * S, 1.4 * S, 10, 20, Math.PI * 1.35);
+    addM(collar, cm, 0, -3.6, 0, Math.PI / 2 + .2, 0, Math.PI * .82);
+    // two hanging sleeves smoothly blended into the curved shoulder yoke
     for (const sx of [-1, 1]) {
-      const cap = new THREE.SphereGeometry(3.2 * S, 12, 10); cap.scale(1, .85, .68);
-      addM(cap, cm, sx * 15.6, -7.8, .3, 0, 0, 0, false);
-      const sl = new THREE.CylinderGeometry(3.1 * S, 2.4 * S, (len * .58) * S, 12); sl.scale(1, 1, .68);
-      addM(sl, cm, sx * 17.0, -8.5 - len * .29, .3, 0, 0, sx * .06);
+      const sl = new THREE.CylinderGeometry(2.8 * S, 2.2 * S, (len * .56) * S, 14); sl.scale(1, 1, .68);
+      addM(sl, cm, sx * 15.6, -9.5 - len * .28, .25, 0, 0, sx * .05);
     }
-    g.position.set(wx(cx), (L + topZ) * S, wz(cy)); G.fittings.add(g);
+    g.position.set(wx(cx), (L + topZ) * S, wz(cy)); wg.add(g);
   };
   // sculpted realistic shoe (sole + rounded toe/vamp + heel counter + ankle opening)
   const shoe = (cx, cy, z0, col, sneaker = false, yaw = 0) => {
@@ -1375,7 +1407,7 @@ function buildEntryWardrobe() {
     addS(heel, sm, 0, 4.7, -7.2);                                                                          // heel counter
     addS(new THREE.CylinderGeometry(3.2 * S, 3.2 * S, 1.4 * S, 12), soleDark, 0, 7.6, -7.2);               // inner collar opening
     addS(new RoundedBoxGeometry(5.6 * S, 4.6 * S, 6.5 * S, 2, .012), sm, 0, 5.2, -.5, -.42);               // tongue / instep
-    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = yaw; G.fittings.add(g);
+    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = yaw; wg.add(g);
   };
   // sculpted Chelsea leather boot
   const boot = (cx, cy, z0, col, yaw = 0) => {
@@ -1390,7 +1422,7 @@ function buildEntryWardrobe() {
     addB(shaft, bm, 0, 12.2, -6.5);
     addB(new THREE.BoxGeometry(9.3 * S, 11 * S, 4.4 * S), gore, 0, 13.5, -6.5);                            // elastic side gussets
     addB(new THREE.CylinderGeometry(3.8 * S, 3.8 * S, 1.2 * S, 14), soleDark, 0, 22.3, -6.5);              // opening
-    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = yaw; G.fittings.add(g);
+    g.position.set(wx(cx), (L + z0) * S, wz(cy)); g.rotation.y = yaw; wg.add(g);
   };
 
   // 1 · LACK 30 × 28 × 190, wall-mounted, top level with the PAX (bottom at 46.4); 3 cm frame, 4 shelves → 5 compartments
@@ -1429,7 +1461,7 @@ function buildEntryWardrobe() {
       const kg = new THREE.Group();
       const head = new THREE.Mesh(new THREE.CylinderGeometry(1.05 * S, 1.05 * S, .24 * S, 16), km); head.receiveShadow = true; kg.add(head);
       const blade = new THREE.Mesh(new THREE.BoxGeometry(3.8 * S, .22 * S, .9 * S), km); blade.position.x = 2.3 * S; blade.receiveShadow = true; kg.add(blade);
-      kg.position.set(wx(lc + 3.2 + dx), (L + tz + .75) * S, wz(tyc + .6 + dy)); kg.rotation.y = a; G.fittings.add(kg);
+      kg.position.set(wx(lc + 3.2 + dx), (L + tz + .75) * S, wz(tyc + .6 + dy)); kg.rotation.y = a; wg.add(kg);
     }
   }
   // Comp 2: 3 stacked hardcover art/architecture books
@@ -1449,7 +1481,7 @@ function buildEntryWardrobe() {
         const lf = new THREE.Mesh(new THREE.SphereGeometry(1.15 * S, 8, 6), leafM); lf.scale.set(1, .2, 1.35);
         lf.position.set((k % 2 ? 1 : -1) * .9 * S, (h * .4 + k * 1.9) * S, 0); lf.rotation.z = (k % 2 ? -.5 : .5); sg.add(lf);
       }
-      sg.position.set(wx(lc - 1.5), (L + floorZ[3] + 15.5) * S, wz(YB + 14)); sg.rotation.set(rx, 0, rz); G.fittings.add(sg);
+      sg.position.set(wx(lc - 1.5), (L + floorZ[3] + 15.5) * S, wz(YB + 14)); sg.rotation.set(rx, 0, rz); wg.add(sg);
     }
   }
   // Comp 4 (top): 2 stacked books + small travertine decorative sphere
@@ -1458,28 +1490,29 @@ function buildEntryWardrobe() {
   if (L + floorZ[4] + 12 <= CUT) place(new THREE.Mesh(new THREE.SphereGeometry(3.4 * S, 20, 16), M.trav), lc + 3.5, YB + 15, floorZ[4] + 4.6 + 3.4);
 
   // 2 + 3 · PAX frames 75 and 50, 35 deep, 236.4 tall, standing on the floor side by side
+  const YBK = YB + 2.0;                                                         // rabbeted back panel face (8 mm clear of wall y=698: zero GTAO/depth z-fighting)
   for (const [x0, x1] of [[586, 661], [661, 711]]) {
     pan(x0, x0 + T, YB, YF, 0, H); pan(x1 - T, x1, YB, YF, 0, H);               // sides
     pan(x0 + T, x1 - T, YB, YF, H - T, H);                                      // top
     pan(x0 + T, x1 - T, YF - T, YF, 0, 5.4);                                    // plinth front
-    pan(x0 + T, x1 - T, YB + .4, YF, 5.4, 5.4 + T);                             // bottom
-    pan(x0 + T, x1 - T, YB, YB + .4, 5.4 + T, H - T);                           // back
+    pan(x0 + T, x1 - T, YBK, YF, 5.4, 5.4 + T);                                 // bottom
+    pan(x0 + T, x1 - T, YB + .8, YBK, 5.4 + T, H - T);                          // solid 1.2 cm rabbeted back
   }
   // PAX 75 interior: hat shelf + top shelf, pull-out rail front to back (35-deep frame), 3 tailored coats on hangers, Chelsea boots, lidded boxes
-  for (const z of [178, 207]) pan(587.8, 659.2, YB + .4, YF, z, z + T);
+  for (const z of [178, 207]) pan(587.8, 659.2, YBK, YF, z, z + T);
   if (L + 176 <= CUT) {
-    const rail = new THREE.Mesh(new THREE.CylinderGeometry(.7 * S, .7 * S, (YF - YB - 4) * S, 16), chrome);
-    rail.rotation.x = Math.PI / 2; rail.position.set(wx(623.5), (L + 175.8) * S, wz((YB + YF) / 2)); G.fittings.add(rail);
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(.7 * S, .7 * S, (YF - YBK - 3) * S, 16), chrome);
+    rail.rotation.x = Math.PI / 2; rail.position.set(wx(623.5), (L + 175.8) * S, wz((YBK + YF) / 2)); wg.add(rail);
   }
-  coat(623.5, 705.5, 173, 92, 0x9b7a58);                                         // camel wool coat
-  coat(623.5, 714.5, 173, 86, 0x2c3036);                                         // charcoal overcoat
-  coat(623.5, 723.5, 173, 74, 0x344356);                                         // navy wool jacket
-  boot(600, 716, 5.4 + T, 0x4f3a2b, .06); boot(612.5, 716.5, 5.4 + T, 0x4f3a2b, -.05);
-  storageBox(602, 646, 702, 730, 178 + T, 19, 0xd8ccb7);                         // lidded linen storage boxes
-  storageBox(595, 652, 702, 730, 207 + T, 21, 0xcfc3b0);
+  coat(622.0, 707.0, 173, 92, 0x9b7a58);                                         // camel wool coat
+  coat(624.5, 715.5, 173, 86, 0x2c3036);                                         // charcoal overcoat
+  coat(623.0, 723.5, 173, 74, 0x344356);                                         // navy wool jacket
+  boot(600, 716.5, 5.4 + T, 0x4f3a2b, .06); boot(612.5, 717, 5.4 + T, 0x4f3a2b, -.05);
+  storageBox(602, 646, 703, 730, 178 + T, 19, 0xd8ccb7);                         // lidded linen storage boxes
+  storageBox(595, 652, 703, 730, 207 + T, 21, 0xcfc3b0);
 
   // PAX 50 interior: six shelves, realistic sculpted shoes and lidded linen boxes
-  for (const z of [40, 72, 104, 136, 168, 202]) pan(662.8, 709.2, YB + .4, YF, z, z + T);
+  for (const z of [40, 72, 104, 136, 168, 202]) pan(662.8, 709.2, YBK, YF, z, z + T);
   for (const [z, pairs] of [
     [5.4 + T, [[0x3a281d, false], [0x1c1e21, false]]],
     [40 + T,  [[0xebe7df, true],  [0x7d5838, false]]],
@@ -1487,14 +1520,14 @@ function buildEntryWardrobe() {
   ]) {
     pairs.forEach(([c, sn], pi) => {
       const bx = 669.5 + pi * 23.5;
-      shoe(bx, 717, z, c, sn, .04);
-      shoe(bx + 10.2, 717.5, z, c, sn, -.05);
+      shoe(bx, 717.5, z, c, sn, .04);
+      shoe(bx + 10.2, 718, z, c, sn, -.05);
     });
   }
-  storageBox(666, 706, 702, 731, 104 + T, 23, 0xd8ccb7);
-  storageBox(666, 706, 702, 731, 136 + T, 23, 0xcfc3b0);
-  storageBox(666, 706, 702, 731, 168 + T, 23, 0xd8ccb7);
-  storageBox(666, 706, 702, 731, 202 + T, 22, 0xcfc3b0);
+  storageBox(666, 706, 703, 731, 104 + T, 23, 0xd8ccb7);
+  storageBox(666, 706, 703, 731, 136 + T, 23, 0xcfc3b0);
+  storageBox(666, 706, 703, 731, 168 + T, 23, 0xd8ccb7);
+  storageBox(666, 706, 703, 731, 202 + T, 22, 0xcfc3b0);
   // dark reveals in the 3 mm door gaps: on the frame between the two PAX, on the 50 door's edge inside the 75 frame
   pan(660.7, 661.25, YF, YF + .3, 5.8, 235.2, M.slot);
   // FORSAND doors (229.4 tall, 1.8 thick), each on a pivot at its hinge edge, gold bar handle on the free edge
@@ -1508,7 +1541,7 @@ function buildEntryWardrobe() {
     prism(R(hxc - .6, hxc + .6, YF + T + 1.8, YF + T + 2.6), hz0, hz1, HANDLE_GOLD, inner, { edges:false });
     for (const z of [hz0 + 1.5, hz1 - 2.5]) prism(R(hxc - .4, hxc + .4, YF + T, YF + T + 1.8), z, z + 1, HANDLE_GOLD, inner, { edges:false });
     const open = !!DOOR_OPEN[d.id];
-    pivot.userData = { door:d.id, swing:(d.hinge === 'L' ? -1 : 1) * Math.PI * .5, open };
+    pivot.userData = { door:d.id, swing:(d.hinge === 'L' ? -1 : 1) * Math.PI * .5, open, noGI:true };
     pivot.rotation.y = open ? pivot.userData.swing : 0; G.fittings.add(pivot);
   }
 }
@@ -1774,6 +1807,7 @@ function radiatorDetail(poly, z0, z1, mk) {
 }
 // Painted skirting (8 cm) along every wall face of the parquet rooms; door openings and window niches stay clear
 const skirtRay = new THREE.Raycaster();
+const skirtMat = new THREE.MeshStandardMaterial({ color:0xece9e2, roughness:.82, envMapIntensity:.6 });   // matt paint: the thin top edge no longer sparkles in daylight
 function buildSkirting() {
   G.walls.updateMatrixWorld(true);
   const dir = new THREE.Vector3(), org = new THREE.Vector3();
@@ -1799,7 +1833,7 @@ function buildSkirting() {
         const e0 = Math.max(0, s0 - 1), e1 = Math.min(len, s1 + 1);
         const q = [[ax + ux * e0, ay + uy * e0], [ax + ux * e1, ay + uy * e1]];
         const poly = [q[0], q[1], [q[1][0] - nx * 1.2, q[1][1] - ny * 1.2], [q[0][0] - nx * 1.2, q[0][1] - ny * 1.2]];
-        prism(poly, L, L + 8, M.boiserie, G.fittings, { edges:false });
+        prism(poly, L, L + 8, skirtMat, G.fittings, { edges:false, shadow:false });   // square, matt, no thin shadow: no dotted glint line along the floor
       }
     }
   }
@@ -3022,7 +3056,9 @@ function buildFurnitureItems() {
 }
 function rebuildCuttable() { buildWalls(); buildFittings(); buildDoors(); }
 
+await LOADER.step(64, 'Costruzione appartamento e arredi…');
 buildSlab(); buildFloors(); buildFurniture(); buildCeilings(); buildLabels(); buildPlanLines(); buildGrid(); rebuildCuttable();
+await LOADER.step(86, 'Compilazione shader e ombre…');
 
 /* ===================== controls ===================== */
 const orbitP = new OrbitControls(persp, renderer.domElement);
@@ -3451,13 +3487,13 @@ const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerW
 composer.setPixelRatio(COMPOSER_DPR);   // crisp HiDPI + 4× MSAA balanced for steady 60 FPS
 const renderPass = new RenderPass(scene, persp);
 const gtao = new GTAOPass(scene, persp, 800, 600);
-gtao.updateGtaoMaterial({ radius:.24, distanceExponent:1.4, thickness:.65, scale:1, samples:IS_MOBILE ? 8 : 12 });
-gtao.updatePdMaterial({ lumaPhi:10, depthPhi:2, normalPhi:3, radius:3, rings:2, samples:12 });
-gtao.blendIntensity = .86;
+gtao.updateGtaoMaterial({ radius:.26, distanceExponent:1.6, thickness:.55, scale:1, samples:IS_MOBILE ? 10 : 16 });
+gtao.updatePdMaterial({ lumaPhi:12, depthPhi:2.5, normalPhi:3.5, radius:6, rings:3, samples:16 });
+gtao.blendIntensity = .82;
 gtao.normalMaterial.side = THREE.DoubleSide;   // otherwise mirrored cornice runs vanish from the AO depth pass → blotchy patches
 { const orig = gtao.setSize.bind(gtao);
   gtao.setSize = (w, h) => {
-    const k = IS_MOBILE ? .5 : .55;   // half-res AO + Poisson denoise = rich contact shadows at ~3× lower GPU cost
+    const k = IS_MOBILE ? .5 : .6;    // half-res AO + clean Poisson denoise = smooth contact shadows at 60 FPS
     orig(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
   }; }
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .05, .48, 1.55);
@@ -3500,87 +3536,86 @@ if (sky.material.uniforms.cloudCoverage) {             // Three.js r187 volumetr
   sky.material.uniforms.cloudElevation.value = .55;
   sky.material.uniforms.cloudScale.value = 1.5;
 }
-// Lightweight 360° exterior panorama: Piazza Irnerio 15, Roma (Aurelio), 4th floor — 1 single draw call (~0.01 ms),
+// Lightweight 360° exterior panorama: Piazza Irnerio 15, Milano (4th floor) — 1 single draw call (~0.01 ms),
 // zero impact on interior 60 FPS (excluded from GI/AO/shadows).
-// Cylinder UV compass: u = 0.25 → East (+X, Piazza Irnerio, balcony/living/bed2), u = 0.75 → West (-X, bed1/Via Aurelia side).
+// Cylinder UV compass: u = 0.25 → East (+X, Piazza Irnerio, balcony/living/bed2), u = 0.75 → West (-X, bed1/courtyard side).
 const cityBackdrop = (() => {
   const W = 2048, H = 512, c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d'); let s = 73; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
   const cN = document.createElement('canvas'); cN.width = W; cN.height = H; const gN = cN.getContext('2d');
   const b = document.createElement('canvas'); b.width = W; b.height = H; const gb = b.getContext('2d');
-  // 4th-floor horizon sits slightly below eye level: open Roman sky above, Piazza Irnerio below
+  // 4th-floor horizon sits slightly below eye level: open Milanese sky above, Piazza Irnerio below
   const horiz = H * .56;
-  const ground = gb.createLinearGradient(0, horiz - 35, 0, H);
-  ground.addColorStop(0, 'rgba(220,214,205,0)'); ground.addColorStop(.2, 'rgba(205,196,184,.88)'); ground.addColorStop(1, 'rgba(138,132,126,1)');
-  gb.fillStyle = ground; gb.fillRect(0, horiz - 35, W, H - horiz + 35);
-  // distant soft Roman hills / Aurelio skyline behind the piazza
-  gb.fillStyle = 'rgba(190,185,180,.55)';
-  gb.beginPath(); gb.moveTo(0, H);
-  for (let x = 0; x <= W; x += 32) gb.lineTo(x, horiz - 18 - 10 * Math.sin(x / 180) - 6 * Math.cos(x / 75));
-  gb.lineTo(W, H); gb.closePath(); gb.fill();
-  // Roman 1950s–60s Aurelio palazzine (travertine/cream, cortina brick, Roman ochre) — wider open plaza spacing on East (u ≈ 0.25)
-  const pal = ['#dfd2be', '#d8be9a', '#cfa27e', '#e4d8c6', '#c68d6c', '#d5c7b2'];
-  const awningCols = ['#4d6b52', '#c88c4b', '#cfc4b0', '#5a7360'];
+  const ground = gb.createLinearGradient(0, horiz - 30, 0, H);
+  ground.addColorStop(0, 'rgba(216,218,220,0)'); ground.addColorStop(.2, 'rgba(196,195,190,.88)'); ground.addColorStop(1, 'rgba(130,130,128,1)');
+  gb.fillStyle = ground; gb.fillRect(0, horiz - 30, W, H - horiz + 30);
+  // distant flat Milanese urban silhouette (Pianura Padana horizon)
+  gb.fillStyle = 'rgba(182,186,190,.48)';
+  for (let x = 0; x < W; x += 64) gb.fillRect(x, horiz - 22 - Math.round(rnd() * 14), 56, 32);
+  // Milanese 1960s–70s residential palazzi (clinker brick, warm travertine/ceppo, tortora & cream plaster) — wider piazza spacing on East (u ≈ 0.25)
+  const pal = ['#dcd6ca', '#cfc7b9', '#b88369', '#e2ddd3', '#c4bbb0', '#a97b65'];
+  const awningCols = ['#4b6654', '#b8834a', '#cfc9be', '#5c6b63'];
   for (let x = 0; x < W;) {
     const u = x / W, isEastPiazza = Math.abs(u - .25) < .16;
-    const bw = (isEastPiazza ? 72 : 62) + Math.round(rnd() * 88);
-    // 4th-floor viewpoint: opposite 5–6 storey buildings rise only slightly above eye level on East (across wide piazza), taller on closer West side
-    const top = Math.round(H * (isEastPiazza ? (.44 + rnd() * .11) : (.37 + rnd() * .12)));
-    const col = pal[Math.floor(rnd() * pal.length)], cortina = col === '#cfa27e' || col === '#c68d6c';
+    const bw = (isEastPiazza ? 76 : 64) + Math.round(rnd() * 92);
+    // 4th-floor viewpoint: opposite 6–7 storey Milanese palazzi across Piazza Irnerio (East) & closer residential blocks (West)
+    const top = Math.round(H * (isEastPiazza ? (.42 + rnd() * .11) : (.36 + rnd() * .12)));
+    const col = pal[Math.floor(rnd() * pal.length)], clinker = col === '#b88369' || col === '#a97b65';
     gb.fillStyle = col; gb.fillRect(x, top, bw - 3, H - top);
-    // Roman rooftop parapet + attico terrace / pergola
-    gb.fillStyle = '#e7dfd3'; gb.fillRect(x - 1, top - 5, bw - 1, 6);
-    gb.fillStyle = 'rgba(65,52,42,.22)'; gb.fillRect(x, top + 1, bw - 3, 5);
-    if (rnd() < .55) {                                         // recessed top-floor attico penthouse
-      gb.fillStyle = '#e6dcd0'; gb.fillRect(x + bw * .16, top - 24, bw * .68, 20);
-      gb.fillStyle = '#b98062'; gb.fillRect(x + bw * .14, top - 27, bw * .72, 4);
+    // Milanese stone coping + recessed attico terrace
+    gb.fillStyle = '#e5e0d8'; gb.fillRect(x - 1, top - 4, bw - 1, 5);
+    gb.fillStyle = 'rgba(55,52,48,.22)'; gb.fillRect(x, top + 1, bw - 3, 5);
+    if (rnd() < .5) {
+      gb.fillStyle = '#e3ded6'; gb.fillRect(x + bw * .15, top - 22, bw * .7, 19);
+      gb.fillStyle = '#9b8d80'; gb.fillRect(x + bw * .13, top - 25, bw * .74, 3);
     }
-    // horizontal travertine balcony slabs + windows + Roman tapparelle shutters + occasional sun awnings
-    const floors = 5, fh = 34;
+    // horizontal concrete/stone balcony slabs + dark Milanese iron railings + tapparelle windows + awnings
+    const floors = 6, fh = 32;
     for (let fl = 0; fl < floors; fl++) {
-      const fy = top + 14 + fl * fh; if (fy > H - 20) break;
-      const hasBalc = rnd() < .65;
+      const fy = top + 12 + fl * fh; if (fy > H - 20) break;
+      const hasBalc = rnd() < .68;
       const nWin = Math.max(2, Math.floor((bw - 14) / 22));
       for (let k = 0; k < nWin; k++) {
         const wx0 = x + 8 + k * ((bw - 18) / nWin);
-        gb.fillStyle = 'rgba(58,54,50,.56)'; gb.fillRect(wx0, fy, 11, 20);
-        gb.fillStyle = cortina ? 'rgba(92,84,74,.45)' : 'rgba(84,102,86,.45)'; gb.fillRect(wx0, fy, 11, 5);   // rolled tapparella box
+        gb.fillStyle = 'rgba(50,52,56,.58)'; gb.fillRect(wx0, fy, 11, 19);
+        gb.fillStyle = clinker ? 'rgba(78,74,68,.5)' : 'rgba(90,94,88,.45)'; gb.fillRect(wx0, fy, 11, 5); // tapparella box
         if (rnd() < .24) {                                     // warm evening windows at night
           gN.fillStyle = `rgba(255,${202 + Math.round(rnd() * 34)},${125 + Math.round(rnd() * 40)},${.55 + rnd() * .35})`;
-          gN.fillRect(wx0 + 1, fy + 5, 9, 14);
+          gN.fillRect(wx0 + 1, fy + 5, 9, 13);
         }
       }
       if (hasBalc) {
-        gb.fillStyle = '#e4ddd1'; gb.fillRect(x + 3, fy + 18, bw - 9, 4);               // travertine balcony slab
-        gb.fillStyle = 'rgba(70,68,66,.32)'; gb.fillRect(x + 4, fy + 11, bw - 11, 7);   // iron balustrade
-        if (rnd() < .28) {                                                               // Roman balcony sun awning
+        gb.fillStyle = '#dfdbd2'; gb.fillRect(x + 3, fy + 17, bw - 9, 3.5);             // balcony slab
+        gb.fillStyle = 'rgba(48,50,52,.36)'; gb.fillRect(x + 4, fy + 10, bw - 11, 7);   // dark iron railing
+        if (rnd() < .26) {                                                               // balcony awning
           gb.fillStyle = awningCols[Math.floor(rnd() * awningCols.length)];
-          gb.fillRect(x + 6, fy + 1, Math.min(28, bw - 16), 9);
+          gb.fillRect(x + 6, fy + 1, Math.min(28, bw - 16), 8);
         }
       }
     }
-    x += bw + (isEastPiazza && rnd() < .35 ? 18 : 2);          // wider street gaps on Piazza Irnerio side
+    x += bw + (isEastPiazza && rnd() < .35 ? 18 : 2);          // wider street gaps across Piazza Irnerio
   }
-  // Iconic Roman umbrella pines (Pinus pinea) rising to 3rd/4th floor level in Piazza Irnerio (East, u ≈ 0.14..0.38) + courtyard greenery
-  const pine = (px, py, rw, rh) => {
-    gb.fillStyle = '#5c4636'; gb.fillRect(px - 3, py, 6, H - py);
-    for (let k = -2; k <= 2; k++) {
-      const gr = gb.createRadialGradient(px + k * rw * .28, py - rh * .15, 2, px + k * rw * .28, py, rw * .48);
-      gr.addColorStop(0, 'rgba(66,94,60,.92)'); gr.addColorStop(.65, 'rgba(54,80,50,.85)'); gr.addColorStop(1, 'rgba(54,80,50,0)');
-      gb.fillStyle = gr; gb.beginPath(); gb.ellipse(px + k * rw * .28, py, rw * .48, rh * .48, 0, 0, Math.PI * 2); gb.fill();
+  // Lush Milanese plane/linden trees (platani/tigli) in Piazza Irnerio gardens (East, u ≈ 0.14..0.38) + courtyard greenery (West)
+  const tree = (px, py, rw, rh) => {
+    gb.fillStyle = '#5a5046'; gb.fillRect(px - 2.5, py + rh * .2, 5, H - py);
+    for (const [ox, oy, sr] of [[-.32, .12, .52], [.32, .10, .50], [0, -.18, .58], [-.15, -.04, .54], [.18, -.02, .52]]) {
+      const cx = px + ox * rw, cy = py + oy * rh, r = rw * sr;
+      const gr = gb.createRadialGradient(cx, cy - r * .2, 2, cx, cy, r);
+      gr.addColorStop(0, 'rgba(84,114,72,.92)'); gr.addColorStop(.65, 'rgba(64,92,56,.86)'); gr.addColorStop(1, 'rgba(64,92,56,0)');
+      gb.fillStyle = gr; gb.beginPath(); gb.arc(cx, cy, r, 0, Math.PI * 2); gb.fill();
     }
   };
   for (const [u, yk, rw, rh] of [
-    [.17, .60, 44, 24], [.21, .57, 52, 26], [.245, .61, 48, 24], [.285, .56, 56, 28], [.33, .59, 46, 24],   // Piazza Irnerio pines (East)
-    [.69, .68, 38, 22], [.76, .66, 44, 24], [.82, .69, 36, 20],                                              // West courtyard trees
-  ]) pine(u * W, H * yk, rw, rh);
+    [.17, .63, 40, 32], [.215, .59, 46, 36], [.25, .62, 44, 34], [.29, .58, 48, 38], [.335, .61, 42, 34],  // Piazza Irnerio trees (East)
+    [.69, .68, 36, 28], [.76, .66, 42, 32], [.82, .69, 34, 26],                                              // West courtyard trees
+  ]) tree(u * W, H * yk, rw, rh);
   // warm ambient street-lamp glow down in Piazza Irnerio at night
   const stGlow = gN.createLinearGradient(0, H * .72, 0, H);
   stGlow.addColorStop(0, 'rgba(255,190,110,0)'); stGlow.addColorStop(1, 'rgba(255,180,95,.28)');
   gN.fillStyle = stGlow; gN.fillRect(0, H * .72, W, H * .28);
-  // soft Roman aerial haze + subtle optical depth-of-field blur
+  // soft Milanese aerial haze + subtle optical depth-of-field blur
   const haze = gb.createLinearGradient(0, H * .34, 0, H);
-  haze.addColorStop(0, 'rgba(235,240,246,0)'); haze.addColorStop(.38, 'rgba(236,238,242,.30)'); haze.addColorStop(1, 'rgba(222,220,216,.18)');
+  haze.addColorStop(0, 'rgba(232,238,244,0)'); haze.addColorStop(.38, 'rgba(232,235,240,.32)'); haze.addColorStop(1, 'rgba(218,220,222,.20)');
   gb.fillStyle = haze; gb.fillRect(0, H * .34, W, H * .66);
   g.filter = 'blur(2px)'; g.drawImage(b, 0, 0);
   const bN = document.createElement('canvas'); bN.width = W; bN.height = H;
@@ -3647,7 +3682,7 @@ const GI = (() => {
   function meshes() {
     const out = [];
     const walk = o => {
-      if (!o.visible || o.userData.lamp !== undefined) return;
+      if (!o.visible || o.userData.lamp !== undefined || o.userData.noGI) return;
       if (o.isMesh && !o.isInstancedMesh && o.material && [].concat(o.material).some(solid) && o.geometry.attributes.position) out.push(o);
       for (const c of o.children) walk(c);
     };
@@ -4036,9 +4071,9 @@ function applyQuality(rebuild = true) {
   const size = IS_MOBILE ? 2048 : 3072;
   if (sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
   const d = sunDir(SUN_T);
-  sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.4 + 1.2 * d.y;
+  sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.0 + 1.0 * d.y;   // dollhouse views: softer sun, no blown-out whites
   sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
-  hemi.intensity = .5; renderer.toneMappingExposure = 1.12;
+  hemi.intensity = .5; renderer.toneMappingExposure = .94;
   sky.material.uniforms.sunPosition.value.copy(d);
   sun.shadow.normalBias = .03; sun.shadow.bias = -.0008;
   applyLight();
@@ -4224,7 +4259,7 @@ function applyLight() {
     sp.color.set(0xe4ecfb).lerp(_warmWin, Math.min(1, face * .8 + (1 - el) * .5));
   }
   RF.apply();
-  M.ceiling.emissiveIntensity = INSIDE ? 0 : .8; corniceMat.emissiveIntensity = INSIDE ? 0 : .55;
+  M.ceiling.emissiveIntensity = INSIDE ? 0 : .45; corniceMat.emissiveIntensity = INSIDE ? 0 : .3;
   if (INSIDE) {
     const d = sunDir(SUN_T);
     sun.position.copy(d).multiplyScalar(25); sun.intensity = 2.4 + 1.2 * d.y; sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
@@ -4514,7 +4549,8 @@ if (isTouch) startTouchWalk();   // on phones/tablets the model opens directly i
 
 const sz = new THREE.Vector2();
 const needle = $('needle'), p0 = new THREE.Vector3(), p1 = new THREE.Vector3();
-const clock = new THREE.Clock(); let doorTick = 0, roomTick = 0, toneWarm = false;
+const giPill = $('gi-pill'), giFill = $('gi-fill'), giMsg = $('gi-msg');
+const clock = new THREE.Clock(); let doorTick = 0, roomTick = 0, toneWarm = false, firstFrame = false;
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), .05);
   if (mode === 'walk' && plc.isLocked) {
@@ -4559,12 +4595,23 @@ renderer.setAnimationLoop(() => {
   if (INSIDE && GI.failed && renderer.shadowMap.needsUpdate) windowShadowPass();
   if (cam === persp) {
     const exp = Math.max(renderer.toneMappingExposure, .5);
-    bloom.threshold = (NIGHT ? 1.65 : 1.55) / exp;
-    bloom.strength = NIGHT ? (INSIDE ? .12 : .09) : (INSIDE ? .05 : .025);
-    bloom.radius = NIGHT ? .58 : .45;
+    bloom.threshold = 1.8 / exp;
+    bloom.enabled = NIGHT && INSIDE;          // glow only around lit lamps at night: no milky halo on the 3D model, no daytime glare
+    bloom.strength = .1;
+    bloom.radius = .5;
     outputPass.uniforms.uLens.value = INSIDE ? 1 : 0;
     composer.render();
   } else renderer.render(scene, cam);
+  if (!firstFrame) { firstFrame = true; LOADER.done(); }
+  if (giPill) {
+    const showGI = INSIDE && !GI.on && !GI.failed;
+    giPill.hidden = !showGI;
+    if (showGI) {
+      const p = Math.min(98, Math.round(GI.n / 14 * 100));
+      if (giFill) giFill.style.width = Math.max(12, p) + '%';
+      if (giMsg) giMsg.textContent = NIGHT ? 'Calcolo luci notturne…' : 'Calcolo luce naturale…';
+    }
+  }
   labelRenderer.render(scene, cam);
   p0.set(0, 0, 0).project(cam); p1.set(0, 0, -1).project(cam);
   renderer.getSize(sz);

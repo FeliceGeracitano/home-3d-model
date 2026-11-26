@@ -8,8 +8,56 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="/src/style.css">
+<style>
+  /* Critical inline styles so the architectural loader paints at t=0ms with zero blank flash */
+  #loader{position:fixed;inset:0;z-index:99;display:grid;place-items:center;
+    background:#e6e9e7 radial-gradient(circle at 50% 42%,rgba(45,108,94,.08),transparent 58%);
+    background-image:linear-gradient(rgba(26,33,31,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(26,33,31,.04) 1px,transparent 1px),radial-gradient(circle at 50% 42%,rgba(45,108,94,.08),transparent 58%);
+    background-size:28px 28px,28px 28px,100% 100%;background-position:center;color:#1a211f;
+    font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
+    transition:opacity .5s cubic-bezier(.22,1,.36,1),transform .5s cubic-bezier(.22,1,.36,1)}
+  @media (prefers-color-scheme:dark){#loader{background-color:#111614;color:#e5ebe8;
+    background-image:linear-gradient(rgba(229,235,232,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(229,235,232,.04) 1px,transparent 1px),radial-gradient(circle at 50% 42%,rgba(114,194,174,.11),transparent 58%)}}
+  #loader.done{opacity:0;transform:scale(1.02);pointer-events:none}
+  .ld-card{display:flex;flex-direction:column;align-items:center;gap:18px;width:min(336px,calc(100% - 48px));text-align:center;
+    padding:28px 26px 24px;border-radius:18px;background:rgba(255,255,255,.58);border:1px solid rgba(26,33,31,.09);
+    box-shadow:0 18px 48px rgba(17,24,22,.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  @media (prefers-color-scheme:dark){.ld-card{background:rgba(20,27,24,.72);border-color:rgba(229,235,232,.1);box-shadow:0 20px 56px rgba(0,0,0,.42)}}
+  .ld-plan{width:176px;height:144px;overflow:visible;filter:drop-shadow(0 6px 14px rgba(45,108,94,.12))}
+  .ld-plan path{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+  .ld-plan .outer{stroke-width:22;opacity:.92;stroke-dasharray:4600;stroke-dashoffset:4600;animation:ld-draw 1.35s cubic-bezier(.22,1,.36,1) forwards}
+  .ld-plan .inner{stroke-width:11;opacity:.38;stroke-dasharray:2600;stroke-dashoffset:2600;animation:ld-draw 1.25s .22s cubic-bezier(.22,1,.36,1) forwards}
+  .ld-plan .accent{stroke:#2d6c5e;stroke-width:18;opacity:.95;stroke-dasharray:900;stroke-dashoffset:900;animation:ld-draw 1.05s .4s cubic-bezier(.22,1,.36,1) forwards}
+  .ld-plan .pulse{fill:#2d6c5e;stroke:none;opacity:0;animation:ld-dot 1.6s .55s ease-in-out infinite}
+  @media (prefers-color-scheme:dark){.ld-plan .accent{stroke:#72c2ae}.ld-plan .pulse{fill:#72c2ae}}
+  @keyframes ld-draw{to{stroke-dashoffset:0}}
+  @keyframes ld-dot{0%,100%{opacity:.2;transform:scale(.85)}50%{opacity:.95;transform:scale(1.15)}}
+  .ld-track{width:100%;height:3.5px;border-radius:99px;background:rgba(128,140,135,.22);overflow:hidden;position:relative}
+  .ld-fill{position:absolute;inset:0 auto 0 0;width:14%;border-radius:99px;background:linear-gradient(90deg,#2d6c5e,#4ca892);
+    transition:width .32s cubic-bezier(.22,1,.36,1);animation:ld-trickle 2.4s ease-out forwards;overflow:hidden}
+  .ld-fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);
+    transform:translateX(-100%);animation:ld-sheen 1.4s ease-in-out infinite}
+  @media (prefers-color-scheme:dark){.ld-fill{background:linear-gradient(90deg,#4ea38f,#8ce0cb)}}
+  @keyframes ld-trickle{0%{width:8%}100%{width:32%}}
+  @keyframes ld-sheen{to{transform:translateX(200%)}}
+  .ld-meta{display:flex;justify-content:space-between;width:100%;margin-top:-10px;font:11.5px/1.3 "JetBrains Mono",ui-monospace,Menlo,monospace;opacity:.68;font-variant-numeric:tabular-nums}
+  @media (prefers-reduced-motion:reduce){.ld-plan path{animation:none;stroke-dashoffset:0}.ld-plan .pulse,.ld-fill,.ld-fill::after{animation:none}#loader{transition:opacity .2s ease}}
+</style>
 </head>
 <body>
+
+<div id="loader" role="status" aria-live="polite" aria-label="Caricamento modello 3D">
+  <div class="ld-card">
+    <svg class="ld-plan" viewBox="-70 -75 1290 1015" aria-hidden="true">
+      <path class="outer" d="M-50 -56 H1114 V913 H506 V551 H-50 Z"/>
+      <path class="accent" d="M1114 573 H1189 V833 H1114"/>
+      <path class="inner" d="M360 -5 V531 M360 286 H506 M360 424 H506 M530 -6 V517 M530 278 H1064 M687 -6 V278 M556 693 H711 M711 285 V863"/>
+      <circle class="pulse" cx="890" cy="610" r="24" style="transform-box:fill-box;transform-origin:center"/>
+    </svg>
+    <div class="ld-track"><div id="ld-fill" class="ld-fill"></div></div>
+    <div class="ld-meta"><span id="ld-msg">Caricamento modello 3D…</span><span id="ld-pct">12%</span></div>
+  </div>
+</div>
 
 <div id="app">
   <div id="view" aria-label="Modello 3D dell'appartamento"></div>
@@ -95,6 +143,7 @@
   <div id="joy" class="joy" hidden><i id="joyknob"></i></div>
   <div id="cross" class="crosshair" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
+  <div id="gi-pill" class="gi-pill" role="status" hidden><i class="gi-dot"></i><span id="gi-msg">Calcolo luce naturale…</span><span class="gi-bar"><i id="gi-fill"></i></span></div>
   <div class="compass" title="Nord del disegno (alto della tavola)">
     <svg viewBox="-20 -20 40 40" aria-hidden="true"><g id="needle">
       <path class="n" d="M0 -15 L5 0 L-5 0 Z"/><path class="s" d="M0 15 L5 0 L-5 0 Z"/>

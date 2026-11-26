@@ -97,6 +97,14 @@ th.n{text-align:right}
 .compass text{font:600 8px var(--font-ui);fill:var(--ink)}
 .walkhint{position:absolute;top:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:7px 14px;font-size:12.5px;z-index:4;white-space:nowrap}
 .toast{position:absolute;bottom:80px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:8px;padding:9px 14px;font-size:13px;z-index:5;max-width:calc(100% - 32px)}
+.gi-pill[hidden]{display:none}
+.gi-pill{position:absolute;top:16px;right:16px;display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:99px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:0 4px 16px rgba(0,0,0,.09);font-size:12px;color:var(--ink);z-index:5;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:opacity .35s ease}
+.gi-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:gi-pulse 1.2s ease-in-out infinite}
+@keyframes gi-pulse{0%,100%{opacity:.4;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+.gi-bar{width:44px;height:3px;border-radius:99px;background:var(--line);overflow:hidden;position:relative}
+.gi-bar i{position:absolute;inset:0 auto 0 0;width:0;border-radius:99px;background:var(--accent);transition:width .25s ease}
 .crosshair{position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px 0 0 -5px;border:1.5px solid var(--ink);border-radius:50%;opacity:.5;z-index:2;pointer-events:none}
 .crosshair.door{border-color:var(--accent);opacity:1;border-width:2px}
 .crosshair.door::after{content:'clic: apri / chiudi';position:absolute;top:16px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:11.5px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:99px;padding:2px 8px}
@@ -124,5 +132,6 @@ th.n{text-align:right}
   .compass svg{width:28px;height:28px}
   .walkhint{top:12px;white-space:normal;text-align:center;width:calc(100% - 88px);left:12px;transform:none;border-radius:12px}
   .toast{bottom:auto;top:64px}
+  .gi-pill{top:auto;bottom:70px;right:auto;left:50%;transform:translateX(-50%);white-space:nowrap}
 }
-@media (prefers-reduced-motion:reduce){details summary::before{transition:none}}
+@media (prefers-reduced-motion:reduce){details summary::before{transition:none}.gi-dot{animation:none}}
