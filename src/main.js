@@ -341,46 +341,33 @@ const AGX_GAIN = 1.1;
     .replace(a, a + '\n\tcolor = 0.606 + ( color - 0.606 ) * 1.3;')
     .replace(b, b + '\n\t{ float agxL = dot( color, vec3( 0.2126, 0.7152, 0.0722 ) ); color = agxL + ( color - agxL ) * 1.12; }');
   else console.warn('AgX look not applied'); }
-// Sun shadows with a penumbra that grows with the distance to whatever casts them (percentage-closer soft shadows):
-// a few samples look for blockers around the point, their mean depth sets how wide to blur, then the usual depth
-// tests are spread over that width. The depth slope of the lit surface is followed, so a wide blur does not make a
-// surface shadow itself. psOn = 0: three's own filter, untouched.
+// Sun shadows (Three.js r187 hardware sampler2DShadow + Vogel disk PCF): upgrade the built-in 5-tap Vogel disk
+// to 9 hardware-filtered taps (36 effective bilinear depth tests) for ultra-clean soft penumbrae at 60 FPS.
 const PS_CHUNK = (() => {
-  const c = THREE.ShaderChunk.shadowmap_pars_fragment, a = 'float getShadow( sampler2D shadowMap', b = '\tvec2 cubeToUV(';
-  if (!c.includes(a) || !c.includes(b)) { console.warn('soft sun shadows not applied'); return c; }
-  return c.replace(a, 'float getShadowPCF( sampler2D shadowMap').replace(b, /* glsl */`
-	uniform float psOn; uniform vec3 psK;           // psK: texels of blur per unit of depth gap, least, most
-	float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
-		if ( psOn < 0.5 ) return getShadowPCF( shadowMap, shadowMapSize, shadowBias, shadowRadius, shadowCoord );
-		vec3 sc = shadowCoord.xyz / shadowCoord.w;
-		vec3 ddx = dFdx( sc ), ddy = dFdy( sc );
-		sc.z += shadowBias;
-		if ( sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z > 1.0 ) return 1.0;
-		vec2 texel = 1.0 / shadowMapSize;
-		float det = ddx.x * ddy.y - ddx.y * ddy.x;
-		vec2 grad = abs( det ) > 1e-16 ? vec2( ddy.y * ddx.z - ddx.y * ddy.z, ddx.x * ddy.z - ddy.x * ddx.z ) / det : vec2( 0.0 );
-		grad *= min( 1.0, 0.004 / max( length( grad * texel ), 1e-9 ) );
-		float ang = 6.2831853 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
-		float sum = 0.0, cnt = 0.0;
-		for ( int i = 0; i < 8; i ++ ) {
-			float fi = float( i );
-			vec2 o = sqrt( ( fi + 0.5 ) / 8.0 ) * vec2( cos( fi * 2.3999632 + ang ), sin( fi * 2.3999632 + ang ) ) * psK.z * texel;
-			float d = unpackRGBAToDepth( texture2D( shadowMap, sc.xy + o ) );
-			if ( d < sc.z + dot( grad, o ) ) { sum += d; cnt += 1.0; }
-		}
-		if ( cnt < 0.5 ) return 1.0;
-		float r = clamp( ( sc.z - sum / cnt ) * psK.x, psK.y, psK.z ), lit = 0.0;
-		for ( int i = 0; i < 12; i ++ ) {
-			float fi = float( i );
-			vec2 o = sqrt( ( fi + 0.5 ) / 12.0 ) * vec2( cos( fi * 2.3999632 + ang + 1.7 ), sin( fi * 2.3999632 + ang + 1.7 ) ) * r * texel;
-			lit += step( sc.z + dot( grad, o ), unpackRGBAToDepth( texture2D( shadowMap, sc.xy + o ) ) );
-		}
-		return lit / 12.0;
-	}
-` + b);
+  const c = THREE.ShaderChunk.shadowmap_pars_fragment;
+  const oldTaps = `shadow = (
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 0, 5, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 1, 5, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 2, 5, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 3, 5, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 4, 5, phi ) * radius, shadowCoord.z ) )
+				) * 0.2;`;
+  if (!c.includes(oldTaps)) return c;
+  return c.replace(oldTaps, `shadow = (
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 0, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 1, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 2, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 3, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 4, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 5, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 6, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 7, 9, phi ) * radius, shadowCoord.z ) ) +
+					texture( shadowMap, vec3( shadowCoord.xy + vogelDiskSample( 8, 9, phi ) * radius, shadowCoord.z ) )
+				) * 0.1111111;`);
 })();
 const RF_CHUNK = THREE.ShaderChunk.envmap_physical_pars_fragment
-  .replace('vec4 envMapColor = textureCubeUV( envMap, reflectVec, roughness );', 'vec4 envMapColor = textureCubeUV( envMap, rfDir( reflectVec ), rfOn > 0.5 ? max( roughness, 0.05 ) : roughness );')   // crisp reflections on polished stone, glass and glaze
+  .replace('vec4 envMapColor = textureLod( envMap, envMapRotation * reflectVec, roughnessToMip( roughness ) );',
+    'vec4 envMapColor = textureLod( envMap, envMapRotation * rfDir( reflectVec ), roughnessToMip( rfOn > 0.5 ? max( roughness, 0.04 ) : roughness ) );')   // r187 hardware cubemap mipmap PMREM + box projection
   .replace('return envMapColor.rgb * envMapIntensity;', 'return envMapColor.rgb * ( rfOn > 0.5 ? 1.0 : envMapIntensity );');   // a real room needs no per-material fudge
 if (!RF_CHUNK.includes('rfDir')) console.warn('RF: shader chunk not patched');
 /* ===================== night: the lamps as lights (what every lit material needs) =====================
@@ -782,14 +769,14 @@ const plasterTex = (() => {
 })();
 const M = {
   step:     new THREE.MeshStandardMaterial({ color:0xc9ad8f, roughness:.7 }),   // oak step nosing / riser
-  wall:     new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.96, bumpMap:plasterTex, bumpScale:.35, envMapIntensity:.85 }),   // Farrow & Ball Pointing No.2003 (screen approx.), matt
+  wall:     new THREE.MeshPhysicalMaterial({ color:0xf1eee7, roughness:.96, diffuseRoughness:.55, bumpMap:plasterTex, bumpScale:.38, envMapIntensity:.85 }),   // Farrow & Ball Pointing No.2003, EON matt plaster
   boiserie: new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.55, envMapIntensity:.9 }),    // same colour, satin mouldings
   cap:      new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.96, envMapIntensity:.85 }),   // light in 3D, dark poché in Plan
   slab:     new THREE.MeshStandardMaterial({ color:0x9aa29e, roughness:1 }),
   wood:     new THREE.MeshStandardMaterial({ color:0xcfb894, roughness:.85, side:THREE.DoubleSide }),
   tile:     new THREE.MeshStandardMaterial({ color:0xcfd2ce, roughness:.8,  side:THREE.DoubleSide }),
   // Ceilings render from below only: invisible when orbiting from above, present when walking inside
-  ceiling:  new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:1, bumpMap:plasterTex, bumpScale:.22, side:THREE.FrontSide, envMapIntensity:.7, emissive:0xf6f3ed, emissiveIntensity:.8 }),   // emissive stands in for light bounced up from the floor
+  ceiling:  new THREE.MeshPhysicalMaterial({ color:0xf1eee7, roughness:1, diffuseRoughness:.55, bumpMap:plasterTex, bumpScale:.22, side:THREE.FrontSide, envMapIntensity:.7, emissive:0xf6f3ed, emissiveIntensity:.8 }),   // emissive stands in for light bounced up from the floor
   grille:   new THREE.MeshStandardMaterial({ color:0xe9e7e2, roughness:.5, metalness:.3 }),
   slot:     new THREE.MeshStandardMaterial({ color:0x2a2b2c, roughness:.6 }),
   acUnit:   new THREE.MeshStandardMaterial({ color:0x5f87a3, roughness:.6, transparent:true, opacity:.75 }),
@@ -807,12 +794,12 @@ const M = {
   hob:      new THREE.MeshPhysicalMaterial({ color:0x090a0b, roughness:.08, clearcoat:1, clearcoatRoughness:.04, ior:1.5, envMapIntensity:1.1 }),   // black glass cooktop
   parquet:  new THREE.MeshPhysicalMaterial({ color:new THREE.Color().setRGB(.9, .85, .8, THREE.LinearSRGBColorSpace),   // bleached oak: light, low-saturation, slightly warm, subtle oiled sheen
     roughness:.7, clearcoat:.22, clearcoatRoughness:.36, ior:1.48, map:herringboneTex(), side:THREE.DoubleSide }),
-  paint:    new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.96, bumpMap:plasterTex, bumpScale:.35, envMapIntensity:.85 }),
+  paint:    new THREE.MeshPhysicalMaterial({ color:0xf1eee7, roughness:.96, diffuseRoughness:.55, bumpMap:plasterTex, bumpScale:.38, envMapIntensity:.85 }),
   // polished porcelain: dielectric glaze (F0 ≈ 4 %), near-mirror gloss; reflections come from the environment map
   tundra:   new THREE.MeshPhysicalMaterial({ color:0xffffff, map:tundraTex, roughness:.075, metalness:0, ior:1.5, envMapIntensity:1.1 }),
   tundraGloss: null,                           // the shower back wall: tundra + live planar reflection (set up below, after M)
   greenTile:new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.18, clearcoat:.85, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2, map:greenTileTex() }),
-  trav:     new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.55, map:travertineTexture(false) }),
+  trav:     new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.58, diffuseRoughness:.5, map:travertineTexture(false) }),
   walnut:   new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.6, ...wood(walnutTex()) }),
   doorBrown: new THREE.MeshStandardMaterial({ color:0x9c8574, roughness:.42, ...wood(radWalnutTex(true)) }),   // classic brown front door
   walnutFoil: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.5, ...wood(radWalnutTex()) }),     // RÅDMANSÖ walnut foil, grain along the width
@@ -822,8 +809,8 @@ const M = {
   tortora:  new THREE.MeshStandardMaterial({ color:0xd8ccba, roughness:.6 }),
   towel:    new THREE.MeshStandardMaterial({ color:0xf6f6f4, roughness:.35 }),
   mirror:   new THREE.MeshStandardMaterial({ color:0xeef3f5, roughness:.05, metalness:0, emissive:0x2a3236, side:THREE.DoubleSide }),
-  greige:   new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.76, clearcoat:.12, clearcoatRoughness:.55, map:greigeFloorTex(), side:THREE.DoubleSide }),
-  travFloor:new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.6, map:travertineTexture(false), side:THREE.DoubleSide }),
+  greige:   new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.76, diffuseRoughness:.45, clearcoat:.12, clearcoatRoughness:.55, map:greigeFloorTex(), side:THREE.DoubleSide }),
+  travFloor:new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.6, diffuseRoughness:.5, map:travertineTexture(false), side:THREE.DoubleSide }),
   viola:    new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.2, clearcoat:.72, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2 }),     // kitchen gres; map set by applyGres()
   sand:     new THREE.MeshStandardMaterial({ color:0xcdc3b2, roughness:.55 }),
   sandBody: new THREE.MeshStandardMaterial({ color:0xbfb5a4, roughness:.7 }),
@@ -1588,8 +1575,19 @@ function buildBathDetails() {
   placed(645.5, 270.4, N, g => floorPan(g, 'wc'));
   // Laundry washer, door toward the room (west)
   placed(503.5, 324.4, W, washer);
-  // Bath 1 vanity: vessel basin on the Tundra top + spout from the upstand; drawer reveal
-  placed(504.4, 117, W, g => { const h = new THREE.Group(); h.position.y = .76; vesselBasin(h); g.add(h); });   // on the 76 cm top
+  // Bath 1 vanity: vessel basin on the Tundra top + spout from the upstand + apothecary soap dispensers (as on architect's elevation); drawer reveal
+  placed(504.4, 117, W, g => {
+    const h = new THREE.Group(); h.position.y = .76; vesselBasin(h); g.add(h);
+    const amber = new THREE.MeshPhysicalMaterial({ color:0x6b3a18, roughness:.1, metalness:0, clearcoat:1, clearcoatRoughness:.04, ior:1.5 });
+    const pump = new THREE.MeshStandardMaterial({ color:0x1b1c1d, roughness:.4, metalness:.2 });
+    const lbl = new THREE.MeshStandardMaterial({ color:0xf3efe7, roughness:.8 });
+    for (const [dx, dz, bh] of [[-.26, .16, .135], [-.19, .14, .115]]) {
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(.024, .025, bh, 20), amber); b.position.set(dx, .76 + bh / 2, dz); g.add(b);
+      const lb = new THREE.Mesh(new THREE.CylinderGeometry(.0246, .0252, bh * .48, 20), lbl); lb.position.set(dx, .76 + bh * .48, dz); g.add(lb);
+      const nk = new THREE.Mesh(new THREE.CylinderGeometry(.009, .011, .022, 14), pump); nk.position.set(dx, .76 + bh + .011, dz); g.add(nk);
+      const hd = new THREE.Mesh(new THREE.BoxGeometry(.012, .009, .036), pump); hd.position.set(dx, .76 + bh + .024, dz + .01); g.add(hd);
+    }
+  });   // on the 76 cm top
   prism(R(455.6, 456, 82.5, 151.4), 40, 41, M.slot, G.fittings, { edges:false, cut:false });
   // Bath 2 vanity: mixer behind the integrated basin; two-drawer reveal + finger pull
   placed(560, 112.7, E, g => { const h = new THREE.Group(); h.position.y = .83; deckMixer(h); g.add(h); });
@@ -2014,34 +2012,34 @@ function crown(g, w, h, d) {
   g.computeBoundingBox(); g.computeBoundingSphere();
 }
 const FM = {
-  velvet: new THREE.MeshPhysicalMaterial({ color:0x4e5934, roughness:.9, sheen:1, sheenRoughness:.45, sheenColor:0x9aa36c }),
-  linen:  new THREE.MeshStandardMaterial({ color:0xf3f1ec, roughness:.95 }),
-  sheet:  new THREE.MeshStandardMaterial({ color:0xeceae4, roughness:.9 }),
+  velvet: new THREE.MeshPhysicalMaterial({ color:0x4e5934, roughness:.9, diffuseRoughness:.8, sheen:1, sheenRoughness:.45, sheenColor:0x9aa36c }),
+  linen:  new THREE.MeshPhysicalMaterial({ color:0xf3f1ec, roughness:.95, diffuseRoughness:.75 }),
+  sheet:  new THREE.MeshPhysicalMaterial({ color:0xeceae4, roughness:.9, diffuseRoughness:.7 }),
   sofa:   new THREE.MeshStandardMaterial({ color:0xd5ccc3, roughness:1 }),
   alea:   new THREE.MeshStandardMaterial({ color:0x6f6660, roughness:1, bumpMap:wovenTex, bumpScale:.6 }),
-  aleaChenille: new THREE.MeshPhysicalMaterial({ color:0x4a3a2f, roughness:.93, sheen:.85, sheenRoughness:.5, sheenColor:0x9a8a7e, bumpMap:wovenTex, bumpScale:.45 }),   // soft chenille pile
-  chairFab: new THREE.MeshPhysicalMaterial({ color:0xd2c8b9, roughness:.95, sheen:.6, sheenRoughness:.6, sheenColor:0xeeeae2, bumpMap:wovenTex, bumpScale:.5 }),
+  aleaChenille: new THREE.MeshPhysicalMaterial({ color:0x4a3a2f, roughness:.93, diffuseRoughness:.82, sheen:.85, sheenRoughness:.5, sheenColor:0x9a8a7e, bumpMap:wovenTex, bumpScale:.45 }),   // soft chenille pile
+  chairFab: new THREE.MeshPhysicalMaterial({ color:0xd2c8b9, roughness:.95, diffuseRoughness:.8, sheen:.6, sheenRoughness:.6, sheenColor:0xeeeae2, bumpMap:wovenTex, bumpScale:.5 }),
   oleaOak: new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.58, clearcoat:.3, clearcoatRoughness:.3, ...wood(paleOakTex()) }),      // natural pale oak, satin varnish
   nervoxiLeg: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.45, metalness:.1, ...wood(lightOakTex()) }),   // honey wood-effect powder coat
-  duvet:  new THREE.MeshStandardMaterial({ color:0xf1efea, roughness:.92, side:THREE.DoubleSide, bumpMap:wovenTex, bumpScale:.25 }),
+  duvet:  new THREE.MeshPhysicalMaterial({ color:0xf1efea, roughness:.92, diffuseRoughness:.75, side:THREE.DoubleSide, bumpMap:wovenTex, bumpScale:.25 }),
   loreaPipe: new THREE.MeshStandardMaterial({ color:0x60695a, roughness:.9 }),
-  bedThrow: new THREE.MeshStandardMaterial({ color:0x9a9892, roughness:.95, side:THREE.DoubleSide, bumpMap:wovenTex, bumpScale:.3 }),
-  fitted: new THREE.MeshStandardMaterial({ color:0xe7e4dd, roughness:.92 }),
-  pillowBeige: new THREE.MeshStandardMaterial({ color:0xd9d1c4, roughness:.92 }),
-  pillowGrey: new THREE.MeshStandardMaterial({ color:0x8c8b86, roughness:.92 }),
-  loreaChenille: new THREE.MeshPhysicalMaterial({ color:0x8a937d, roughness:.93, sheen:.8, sheenRoughness:.5, sheenColor:0xbcc2b2, bumpMap:wovenTex, bumpScale:.5 }),
+  bedThrow: new THREE.MeshPhysicalMaterial({ color:0x9a9892, roughness:.95, diffuseRoughness:.8, side:THREE.DoubleSide, bumpMap:wovenTex, bumpScale:.3 }),
+  fitted: new THREE.MeshPhysicalMaterial({ color:0xe7e4dd, roughness:.92, diffuseRoughness:.7 }),
+  pillowBeige: new THREE.MeshPhysicalMaterial({ color:0xd9d1c4, roughness:.92, diffuseRoughness:.75 }),
+  pillowGrey: new THREE.MeshPhysicalMaterial({ color:0x8c8b86, roughness:.92, diffuseRoughness:.75 }),
+  loreaChenille: new THREE.MeshPhysicalMaterial({ color:0x8a937d, roughness:.93, diffuseRoughness:.82, sheen:.8, sheenRoughness:.5, sheenColor:0xbcc2b2, bumpMap:wovenTex, bumpScale:.5 }),
   pipeWhite: new THREE.MeshStandardMaterial({ color:0xf6f4ef, roughness:.85 }),   // contrast piping
-  kivik:  new THREE.MeshPhysicalMaterial({ color:0xc6b9a3, roughness:.98, sheen:.25, sheenRoughness:.8, sheenColor:0xe8e0d2, bumpMap:wovenTex, bumpScale:1.1 }),     // Tallmyra: nubby woven
-  rug:    new THREE.MeshStandardMaterial({ color:0xd2c8b7, roughness:1, bumpMap:wovenTex, bumpScale:2 }),
+  kivik:  new THREE.MeshPhysicalMaterial({ color:0xc6b9a3, roughness:.98, diffuseRoughness:.85, sheen:.25, sheenRoughness:.8, sheenColor:0xe8e0d2, bumpMap:wovenTex, bumpScale:1.1 }),     // Tallmyra: nubby woven
+  rug:    new THREE.MeshPhysicalMaterial({ color:0xd2c8b7, roughness:1, diffuseRoughness:.88, bumpMap:wovenTex, bumpScale:2 }),
   liberty: new THREE.MeshStandardMaterial({ color:0xdcd0bd, roughness:1, bumpMap:wovenTex, bumpScale:.6 }),
-  veliro: new THREE.MeshPhysicalMaterial({ color:0xcdbfa6, roughness:.95, sheen:.7, sheenRoughness:.6, sheenColor:0xfff3df, bumpMap:wovenTex, bumpScale:.6 }),   // cream chenille (photo)
+  veliro: new THREE.MeshPhysicalMaterial({ color:0xcdbfa6, roughness:.95, diffuseRoughness:.82, sheen:.7, sheenRoughness:.6, sheenColor:0xfff3df, bumpMap:wovenTex, bumpScale:.6 }),   // cream chenille (photo)
   emperador: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.32, map:emperadorTex() }),
   lightOak: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.55, ...wood(lightOakTex()) }),
   tarseleOak: new THREE.MeshPhysicalMaterial({ color:0xdccdb8, roughness:.5, clearcoat:.45, clearcoatRoughness:.22, ...wood(lightOakTex()) }),   // oak veneer, clear lacquer
   powderBlack: new THREE.MeshStandardMaterial({ color:0x1c1d1e, roughness:.55, metalness:.35 }),
   powderWhite: new THREE.MeshStandardMaterial({ color:0xeeece7, roughness:.5, metalness:.15 }),
-  poufBeige: new THREE.MeshStandardMaterial({ color:0xd8ccb8, roughness:1, bumpMap:wovenTex, bumpScale:1.4 }),
-  boucle: new THREE.MeshStandardMaterial({ color:0xece6db, roughness:1, bumpMap:plasterTex, bumpScale:1.2 }),
+  poufBeige: new THREE.MeshPhysicalMaterial({ color:0xd8ccb8, roughness:1, diffuseRoughness:.85, bumpMap:wovenTex, bumpScale:1.4 }),
+  boucle: new THREE.MeshPhysicalMaterial({ color:0xece6db, roughness:1, diffuseRoughness:.88, sheen:.45, sheenRoughness:.7, sheenColor:0xfbf8f2, bumpMap:plasterTex, bumpScale:1.2 }),
   whiteMetal: new THREE.MeshStandardMaterial({ color:0xf1efea, roughness:.45, metalness:.2 }),
   oak:    new THREE.MeshStandardMaterial({ color:0xc4a27a, roughness:.6 }),
   metal:  new THREE.MeshStandardMaterial({ color:0x2b2c2d, roughness:.4, metalness:.6 }),
@@ -2679,13 +2677,18 @@ const pickItem = slot => CATALOG[slot].options.find(o => o.id === CHOICE[slot]) 
 try { if (!localStorage.getItem('irnerio-kivik-fumo')) { if (CHOICE.sofaColor === 'tallmyraBeige') CHOICE.sofaColor = 'tallmyraFumo'; localStorage.setItem('irnerio-kivik-fumo', '1'); localStorage.setItem('irnerio-arredi', JSON.stringify(CHOICE)); } } catch {}
 { const pal = pickItem('bed').colors; if (pal && !pal.some(c => c[0] === CHOICE.bedColor)) CHOICE.bedColor = pal[0][0]; }   // fabric must belong to the chosen bed
 applyGres(); applyKitchenFinish(); applyBedWall();
-// Sheer linen curtains, drawn open beside each window (track just under the ceiling)
-const curtainMat = new THREE.MeshStandardMaterial({ color:0xf4f0e8, roughness:1, side:THREE.DoubleSide, transparent:true, opacity:.86, bumpMap:wovenTex, bumpScale:.4 });
+// Sheer Belgian linen curtains, drawn open beside each window with soft gravity pleats and subtle sunlit backlighting
+const curtainMat = new THREE.MeshPhysicalMaterial({ color:0xf5f1e9, roughness:.96, diffuseRoughness:.78, sheen:.55, sheenRoughness:.7, sheenColor:0xfff8ec,
+  emissive:0xfff1dc, emissiveIntensity:0, side:THREE.DoubleSide, transparent:true, opacity:.78, bumpMap:wovenTex, bumpScale:.45 });
 function curtainPanel(x, y0, y1, ceil, inward) {
-  const w = (y1 - y0) * S, h = (ceil - 6) * S, g = new THREE.PlaneGeometry(w * 1.0, h, 48, 1), P = g.attributes.position;
-  for (let i = 0; i < P.count; i++) P.setZ(i, Math.sin(P.getX(i) / w * Math.PI * 9) * .025);
+  const w = (y1 - y0) * S, h = (ceil - 6) * S, g = new THREE.PlaneGeometry(w * 1.0, h, 56, 8), P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    const u = P.getX(i) / w, v = (h / 2 - P.getY(i)) / h;             // v: 0 at rod → 1 at hem
+    const wave = Math.sin(u * Math.PI * 9) * (.022 + .009 * v) + Math.sin(u * Math.PI * 19 + 1.1) * .005 * v;
+    P.setZ(i, wave);
+  }
   g.computeVertexNormals();
-  const m = new THREE.Mesh(g, curtainMat); m.rotation.y = Math.PI / 2;
+  const m = new THREE.Mesh(g, curtainMat); m.rotation.y = Math.PI / 2; m.receiveShadow = true;
   m.position.set(wx(x + inward * 8), (h / 2) + .01, wz((y0 + y1) / 2)); G.furniture.add(m);
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(.008, .008, w + .06, 12), FM.metal); rod.rotation.x = Math.PI / 2;
   rod.position.set(wx(x + inward * 8), h + .03, wz((y0 + y1) / 2)); G.furniture.add(rod);
@@ -3327,56 +3330,73 @@ roof.raycast = () => {};
   const landing = new THREE.Mesh(new THREE.BoxGeometry(1.9, 3.5, 2.37), new THREE.MeshStandardMaterial({ color:0x8a8780, roughness:1, colorWrite:false, depthWrite:false, side:THREE.DoubleSide }));
   landing.position.set(wx(635), 1.55 - 3.06, wz(1031.7)); landing.castShadow = true; landing.raycast = () => {}; roof.add(landing);
 }
-{ const ov = gtao.overrideVisibility.bind(gtao), rv = gtao.restoreVisibility.bind(gtao); let was = false;
-  let gw = false;
-  gtao.overrideVisibility = () => { ov(); was = roof.visible; roof.visible = false; cityBackdrop.visible = false; if (GLOSS.refl) { gw = GLOSS.refl.visible; GLOSS.refl.visible = false; } };
-  gtao.restoreVisibility = () => { rv(); roof.visible = was; cityBackdrop.visible = INSIDE; if (GLOSS.refl) GLOSS.refl.visible = gw; }; }
+{ const ovK = gtao._overrideVisibility ? '_overrideVisibility' : 'overrideVisibility', rvK = gtao._restoreVisibility ? '_restoreVisibility' : 'restoreVisibility';
+  const ov = gtao[ovK].bind(gtao), rv = gtao[rvK].bind(gtao); let was = false, gw = false;
+  gtao[ovK] = () => { ov(); was = roof.visible; roof.visible = false; cityBackdrop.visible = false; if (GLOSS.refl) { gw = GLOSS.refl.visible; GLOSS.refl.visible = false; } };
+  gtao[rvK] = () => { rv(); roof.visible = was; cityBackdrop.visible = INSIDE; if (GLOSS.refl) GLOSS.refl.visible = gw; }; }
 const sky = new Sky(); sky.scale.setScalar(45); scene.add(sky);
 Object.assign(sky.material.uniforms.turbidity, { value:4 }); sky.material.uniforms.rayleigh.value = 1.2;
 sky.material.uniforms.mieCoefficient.value = .004; sky.material.uniforms.mieDirectionalG.value = .8;
-// Soft Bologna historic-centre skyline outside the windows (1 draw call, visible only in Cammina; excluded from GI/AO/raycasts)
+if (sky.material.uniforms.cloudCoverage) {             // Three.js r187 volumetric fair-weather clouds
+  sky.material.uniforms.cloudCoverage.value = .32;
+  sky.material.uniforms.cloudDensity.value = .42;
+  sky.material.uniforms.cloudElevation.value = .55;
+  sky.material.uniforms.cloudScale.value = 1.5;
+}
+// Soft bokeh Bologna historic-centre skyline outside the windows (1 draw call, day + warm lit night windows)
 const cityBackdrop = (() => {
   const W = 2048, H = 512, c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d'); let s = 41; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-  const day = g.createLinearGradient(0, H * .48, 0, H);
-  day.addColorStop(0, 'rgba(214,205,194,0)'); day.addColorStop(.22, 'rgba(202,190,176,.85)'); day.addColorStop(1, 'rgba(136,126,115,1)');
-  g.fillStyle = day; g.fillRect(0, H * .48, W, H * .52);
-  // distant soft Bologna terracotta / ochre facades across the street
+  const cN = document.createElement('canvas'); cN.width = W; cN.height = H; const gN = cN.getContext('2d');
+  // draw into an offscreen buffer first, then apply subtle optical depth-of-field blur
+  const b = document.createElement('canvas'); b.width = W; b.height = H; const gb = b.getContext('2d');
+  const day = gb.createLinearGradient(0, H * .48, 0, H);
+  day.addColorStop(0, 'rgba(214,205,194,0)'); day.addColorStop(.22, 'rgba(202,190,176,.88)'); day.addColorStop(1, 'rgba(136,126,115,1)');
+  gb.fillStyle = day; gb.fillRect(0, H * .48, W, H * .52);
   const cols = ['#d8b89a', '#cfa483', '#dfc7ad', '#c89372', '#d4baa2', '#c58f6e'];
   for (let x = 0; x < W;) {
     const bw = 55 + Math.round(rnd() * 95), top = Math.round(H * (.40 + rnd() * .16)), col = cols[Math.floor(rnd() * cols.length)];
-    g.fillStyle = col; g.fillRect(x, top, bw - 2, H - top);
-    // terracotta roofline & eaves shadow
-    g.fillStyle = '#9c5a42'; g.fillRect(x - 1, top - 10, bw, 11);
-    g.fillStyle = 'rgba(55,35,25,.24)'; g.fillRect(x, top + 1, bw - 2, 6);
-    // shuttered windows in neat rows
+    gb.fillStyle = col; gb.fillRect(x, top, bw - 2, H - top);
+    // pitched terracotta roof & classic Bolognese cornice shadow
+    gb.fillStyle = '#9c5a42'; gb.fillRect(x - 1, top - 11, bw, 12);
+    gb.fillStyle = '#e8dfd4'; gb.fillRect(x, top + 1, bw - 2, 4);
+    gb.fillStyle = 'rgba(55,35,25,.24)'; gb.fillRect(x, top + 5, bw - 2, 5);
     const colsN = Math.max(2, Math.floor((bw - 14) / 22));
     for (let r = 0; r < 4; r++) {
-      const wy = top + 18 + r * 44; if (wy > H - 24) break;
+      const wy = top + 20 + r * 44; if (wy > H - 24) break;
       for (let k = 0; k < colsN; k++) {
         const wx0 = x + 8 + k * ((bw - 18) / colsN);
-        g.fillStyle = 'rgba(72,62,56,.52)'; g.fillRect(wx0, wy, 10, 20);
-        g.fillStyle = 'rgba(84,100,82,.42)'; g.fillRect(wx0 - 4, wy, 3.5, 20); g.fillRect(wx0 + 10.5, wy, 3.5, 20);
+        gb.fillStyle = 'rgba(72,62,56,.52)'; gb.fillRect(wx0, wy, 10, 20);
+        gb.fillStyle = 'rgba(84,100,82,.42)'; gb.fillRect(wx0 - 4, wy, 3.5, 20); gb.fillRect(wx0 + 10.5, wy, 3.5, 20);
+        if (rnd() < .26) {                                    // warm lit evening windows in the neighbouring palazzi
+          gN.fillStyle = `rgba(255,${200 + Math.round(rnd() * 35)},${120 + Math.round(rnd() * 40)},${.55 + rnd() * .35})`;
+          gN.fillRect(wx0 + 1, wy + 2, 8, 16);
+        }
       }
     }
     x += bw;
   }
-  // soft courtyard tree canopy along the lower edge
   for (let i = 0; i < 42; i++) {
     const tx = rnd() * W, ty = H * (.76 + rnd() * .16), tr = 22 + rnd() * 34;
-    const gr = g.createRadialGradient(tx, ty, 4, tx, ty, tr);
-    gr.addColorStop(0, `rgba(${78 + Math.round(rnd() * 25)},${98 + Math.round(rnd() * 22)},${72 + Math.round(rnd() * 18)},.75)`);
+    const gr = gb.createRadialGradient(tx, ty, 4, tx, ty, tr);
+    gr.addColorStop(0, `rgba(${78 + Math.round(rnd() * 25)},${98 + Math.round(rnd() * 22)},${72 + Math.round(rnd() * 18)},.78)`);
     gr.addColorStop(1, 'rgba(76,92,68,0)');
-    g.fillStyle = gr; g.beginPath(); g.arc(tx, ty, tr, 0, Math.PI * 2); g.fill();
+    gb.fillStyle = gr; gb.beginPath(); gb.arc(tx, ty, tr, 0, Math.PI * 2); gb.fill();
   }
-  // subtle atmospheric distance haze (softens the backdrop like a real sunlit exterior outside a window)
-  const haze = g.createLinearGradient(0, H * .36, 0, H);
+  const haze = gb.createLinearGradient(0, H * .36, 0, H);
   haze.addColorStop(0, 'rgba(232,238,244,0)'); haze.addColorStop(.35, 'rgba(232,236,240,.34)'); haze.addColorStop(1, 'rgba(218,220,222,.22)');
-  g.fillStyle = haze; g.fillRect(0, H * .36, W, H * .64);
+  gb.fillStyle = haze; gb.fillRect(0, H * .36, W, H * .64);
+  g.filter = 'blur(2.2px)'; g.drawImage(b, 0, 0);
+  const bN = document.createElement('canvas'); bN.width = W; bN.height = H;
+  const gNb = bN.getContext('2d'); gNb.filter = 'blur(2.6px)'; gNb.drawImage(cN, 0, 0);
   const tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace; tx.wrapS = THREE.RepeatWrapping; tx.anisotropy = 4;
+  const txN = new THREE.CanvasTexture(bN); txN.colorSpace = THREE.SRGBColorSpace; txN.wrapS = THREE.RepeatWrapping;
   const m = new THREE.Mesh(new THREE.CylinderGeometry(28, 28, 22, 48, 1, true),
     new THREE.MeshBasicMaterial({ map:tx, side:THREE.BackSide, transparent:true, depthWrite:false, fog:false }));
-  m.position.y = 2.6; m.visible = false; m.frustumCulled = false; m.raycast = () => {};
+  const mN = new THREE.Mesh(new THREE.CylinderGeometry(27.6, 27.6, 22, 48, 1, true),
+    new THREE.MeshBasicMaterial({ map:txN, side:THREE.BackSide, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, fog:false }));
+  m.add(mN); m.userData.nightWin = mN;
+  m.position.y = 2.6; m.visible = false; m.frustumCulled = false; m.raycast = () => {}; mN.raycast = () => {};
   scene.add(m);
   return m;
 })();
@@ -3623,7 +3643,7 @@ const GI = (() => {
                 if (intersectsTriangle(ro, rd, texelFetch1D(bvh.position, ix.x).rgb, texelFetch1D(bvh.position, ix.y).rgb,
                     texelFetch1D(bvh.position, ix.z).rgb, bc, nn, d, sd) && d < tMax) return true;
               }
-            } else { ptr++; stack[ptr] = info.y; ptr++; stack[ptr] = node + 1u; }
+            } else { ptr++; stack[ptr] = node + info.y; ptr++; stack[ptr] = node + 1u; }
           }
           return false;
         }
@@ -4020,10 +4040,8 @@ function applyLight() {
   } else { hemi.color.set(0xfffaf2); hemi.groundColor.set(0xd8cfc2); }
   GIU.giOn.value = gi ? 1 : 0;
   renderer.toneMapping = gi ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;   // the film-like curve goes with the real light
-  // sun shadows: sharp where something touches the floor, softer the farther the edge that casts them (a window head, a
-  // curtain); the sun taken about twice its real width, as through a thin haze. Desktop only: it costs a few more samples
-  { const c = sun.shadow.camera, texel = (c.right - c.left) / sun.shadow.mapSize.x;
-    GIU.psOn.value = gi && !IS_MOBILE ? 1 : 0; GIU.psK.value.set((c.far - c.near) * .011 / texel, 1.2, 13); }
+  // Three.js r187 hardware 9-tap Vogel-disk PCF shadow radius: soft natural sun penumbra at 60 FPS
+  sun.shadow.radius = INSIDE && !IS_MOBILE ? 2.6 : 1.6;
   roof.visible = INSIDE;                                    // the lid only at eye level: the dollhouse views stay sunlit from above
   if (NIGHT) {                                              // no sun, a trace of sky: the lamps do the rest (see NL)
     sun.intensity = 0;
@@ -4226,6 +4244,14 @@ function buildSpots() {
     spotG.add(g);
     lampReg('spot-' + id, [g], { src:mt => mt === lens, I:.1, lobe:[.04, 0, 1, .28], reach, off:[0, -5, 0], grab:.2 }, BULBS);
   }
+  // Recessed warm LED under-cabinet strip in the kitchen (illuminates Calacatta Viola splashback & hob by night)
+  const ledLens = new THREE.MeshStandardMaterial({ color:0xfff6e5, roughness:.3, emissive:0xffe0ac, emissiveIntensity:1.8 });
+  const ledG = new THREE.Group();
+  const B = lvl(633, 660);
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(1.42, .008, .018), ledLens);
+  strip.position.set(wx(633.5), (B + 159.6) * S, wz(658));
+  ledG.add(strip); spotG.add(ledG);
+  lampReg('spot-kit-led', [ledG], { src:mt => mt === ledLens, I:.065, lobe:[.06, 0, 1, .12], reach:3.2, off:[0, -4, 4], grab:.25 }, BULBS);
 }
 function toggleLamp(id) { if (LAMP_OFF.has(id)) LAMP_OFF.delete(id); else LAMP_OFF.add(id); NL.apply(); }
 function setNight(on) {
@@ -4326,9 +4352,13 @@ renderer.setAnimationLoop(() => {
   cityBackdrop.visible = INSIDE;
   if (INSIDE) {
     const exp = Math.max(renderer.toneMappingExposure, .5);
-    // keep exterior buildings balanced against indoor exposure (bright warm sunlit facades by day, dim moody silhouette by night)
+    // keep exterior buildings balanced against indoor exposure (warm sunlit facades by day, moody silhouette + glowing windows by night)
     cityBackdrop.material.color.setHex(NIGHT ? 0x1e2538 : 0xfff8ef).multiplyScalar((NIGHT ? .14 : 1.15) / exp);
-  }
+    cityBackdrop.userData.nightWin.visible = NIGHT;
+    if (NIGHT) cityBackdrop.userData.nightWin.material.color.setHex(0xffe0a8).multiplyScalar(1.1 / exp);
+    // subtle warm sunlit backlighting through sheer linen curtains by day
+    curtainMat.emissiveIntensity = NIGHT ? 0 : .055 / exp;
+  } else curtainMat.emissiveIntensity = 0;
   nightEdges(); nightBackground();
   if (INSIDE && GI.failed && renderer.shadowMap.needsUpdate) windowShadowPass();
   if (cam === persp) {
