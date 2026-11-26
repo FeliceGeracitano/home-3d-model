@@ -270,13 +270,11 @@ vec2 giOct(vec3 n) {                              // unit vector → octahedral 
   return r * 0.5 + 0.5;
 }
 vec3 giSky(vec3 d) { float t = d.y * 0.5 + 0.5; return mix(giSkyB, giSkyT, t * t); }
-// irradiance arriving at P on a surface facing N (world space); V points from P toward the eye
-vec3 giIrradiance(vec3 P, vec3 N, vec3 V) {
-  vec3 bp = P + N * 0.07 + V * 0.05;              // step off the surface before asking the probes
+// sample one 2×2×2 probe cell around bp (world space) → vec4(weightedIrradiance, totalWeight)
+vec4 giCell(vec3 P, vec3 N, vec3 bp, vec2 on) {
   vec3 g = (bp - giOrg) / giStep;
   vec3 base = clamp(floor(g), vec3(0.0), giDim - 2.0);
   vec3 a = clamp(g - base, 0.0, 1.0);
-  vec2 on = giOct(N);
   vec3 sum = vec3(0.0); float ws = 0.0;
   for (int i = 0; i < 8; i++) {
     float fi = float(i);
@@ -294,10 +292,25 @@ vec3 giIrradiance(vec3 P, vec3 N, vec3 V) {
     vec4 e = texture2D(giIrr, (tile * ${GI_IT}.0 + 1.0 + on * ${GI_IT - 2}.0) * giAtlas.xy);
     w = max(w, 1e-6); if (w < 0.2) w *= w * w * 25.0;
     vec3 tw = mix(1.0 - a, a, o);
-    w *= tw.x * tw.y * tw.z * e.a * e.a + 1e-7;   // e.a: 0 for a probe buried in a wall or a piece of furniture
+    w *= tw.x * tw.y * tw.z * e.a * e.a;          // e.a: 0 for a probe buried in a wall or a piece of furniture
     sum += e.rgb * w; ws += w;
   }
-  vec3 E = mix(giAmb, 3.14159265 * sum / ws, clamp(ws * 1e4, 0.0, 1.0));
+  return vec4(sum, ws);
+}
+// irradiance arriving at P on a surface facing N (world space); V points from P toward the eye
+vec3 giIrradiance(vec3 P, vec3 N, vec3 V) {
+  vec3 bp = P + N * 0.07 + V * 0.05;              // step off the surface before asking the probes
+  vec2 on = giOct(N);
+  vec4 r = giCell(P, N, bp, on);
+  if (r.a < 1e-4) {                               // all 8 probes buried (tight niche / above tall cabinet / below grid): step out into open air
+    vec4 r2 = giCell(P, N, bp + N * giStep.x, on);
+    if (r2.a > r.a) r = r2;
+    if (r.a < 1e-4) {
+      vec4 r3 = giCell(P, N, bp + V * (1.6 * giStep.x), on);
+      if (r3.a > r.a) r = r3;
+    }
+  }
+  vec3 E = r.a > 1e-5 ? 3.14159265 * r.rgb / r.a : giAmb;
   vec2 lo = giOrg.xz - 0.1, hi = giOrg.xz + (giDim.xz - 1.0) * giStep.xz + 0.1;   // beyond the grid = outdoors: open sky
   float outside = clamp(length(max(max(lo - P.xz, P.xz - hi), 0.0)) * 4.0, 0.0, 1.0);
   return mix(E, 3.14159265 * 0.7 * giSky(N), outside);
@@ -349,20 +362,20 @@ const PS_CHUNK = (() => {
 		grad *= min( 1.0, 0.004 / max( length( grad * texel ), 1e-9 ) );
 		float ang = 6.2831853 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
 		float sum = 0.0, cnt = 0.0;
-		for ( int i = 0; i < 10; i ++ ) {
+		for ( int i = 0; i < 8; i ++ ) {
 			float fi = float( i );
-			vec2 o = sqrt( ( fi + 0.5 ) / 10.0 ) * vec2( cos( fi * 2.3999632 + ang ), sin( fi * 2.3999632 + ang ) ) * psK.z * texel;
+			vec2 o = sqrt( ( fi + 0.5 ) / 8.0 ) * vec2( cos( fi * 2.3999632 + ang ), sin( fi * 2.3999632 + ang ) ) * psK.z * texel;
 			float d = unpackRGBAToDepth( texture2D( shadowMap, sc.xy + o ) );
 			if ( d < sc.z + dot( grad, o ) ) { sum += d; cnt += 1.0; }
 		}
 		if ( cnt < 0.5 ) return 1.0;
 		float r = clamp( ( sc.z - sum / cnt ) * psK.x, psK.y, psK.z ), lit = 0.0;
-		for ( int i = 0; i < 16; i ++ ) {
+		for ( int i = 0; i < 12; i ++ ) {
 			float fi = float( i );
-			vec2 o = sqrt( ( fi + 0.5 ) / 16.0 ) * vec2( cos( fi * 2.3999632 + ang + 1.7 ), sin( fi * 2.3999632 + ang + 1.7 ) ) * r * texel;
+			vec2 o = sqrt( ( fi + 0.5 ) / 12.0 ) * vec2( cos( fi * 2.3999632 + ang + 1.7 ), sin( fi * 2.3999632 + ang + 1.7 ) ) * r * texel;
 			lit += step( sc.z + dot( grad, o ), unpackRGBAToDepth( texture2D( shadowMap, sc.xy + o ) ) );
 		}
-		return lit / 16.0;
+		return lit / 12.0;
 	}
 ` + b);
 })();
@@ -747,13 +760,17 @@ function wood(tex, own = false) {
   return { map:tex, roughnessMap:r };
 }
 const MAX_ANISO = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-const RELIEF = { dirty:true, pass() {     // swap the old shared bump textures for their normal maps, and sharpen grazing textures with anisotropic filtering
+const RELIEF = { dirty:true, pass() {     // swap shared bump maps for normal maps, apply anisotropy, and ensure all lit meshes receive shadows
   RELIEF.dirty = false;
-  scene.traverse(o => { for (const m of [].concat(o.material || [])) {
-    for (const k of ['map', 'normalMap', 'roughnessMap']) { const tx = m[k]; if (tx && tx.anisotropy < MAX_ANISO) { tx.anisotropy = MAX_ANISO; tx.needsUpdate = true; } }
-    const e = m.bumpMap && RELIEF.pick(m); if (!e) continue;
-    m.normalMap = e[0]; m.normalScale.setScalar(Math.max(.2, Math.min(e[2], m.bumpScale * e[1]))); m.bumpMap = null; m.needsUpdate = true;
-  } });
+  scene.traverse(o => {
+    const mats = [].concat(o.material || []);
+    if (o.isMesh && !o.receiveShadow && mats.some(m => m.isMeshStandardMaterial && m.colorWrite && m !== M.mirror && m !== mirrorPBR)) o.receiveShadow = true;
+    for (const m of mats) {
+      for (const k of ['map', 'normalMap', 'roughnessMap']) { const tx = m[k]; if (tx && tx.anisotropy < MAX_ANISO) { tx.anisotropy = MAX_ANISO; tx.needsUpdate = true; } }
+      const e = m.bumpMap && RELIEF.pick(m); if (!e) continue;
+      m.normalMap = e[0]; m.normalScale.setScalar(Math.max(.2, Math.min(e[2], m.bumpScale * e[1]))); m.bumpMap = null; m.needsUpdate = true;
+    }
+  });
 } };
 // Fine plaster grain for painted walls (subtle bump + roughness variation), tiles every 1 m
 const plasterTex = (() => {
@@ -772,7 +789,7 @@ const M = {
   wood:     new THREE.MeshStandardMaterial({ color:0xcfb894, roughness:.85, side:THREE.DoubleSide }),
   tile:     new THREE.MeshStandardMaterial({ color:0xcfd2ce, roughness:.8,  side:THREE.DoubleSide }),
   // Ceilings render from below only: invisible when orbiting from above, present when walking inside
-  ceiling:  new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:1, side:THREE.FrontSide, envMapIntensity:.7, emissive:0xf6f3ed, emissiveIntensity:.8 }),   // emissive stands in for light bounced up from the floor
+  ceiling:  new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:1, bumpMap:plasterTex, bumpScale:.22, side:THREE.FrontSide, envMapIntensity:.7, emissive:0xf6f3ed, emissiveIntensity:.8 }),   // emissive stands in for light bounced up from the floor
   grille:   new THREE.MeshStandardMaterial({ color:0xe9e7e2, roughness:.5, metalness:.3 }),
   slot:     new THREE.MeshStandardMaterial({ color:0x2a2b2c, roughness:.6 }),
   acUnit:   new THREE.MeshStandardMaterial({ color:0x5f87a3, roughness:.6, transparent:true, opacity:.75 }),
@@ -786,10 +803,10 @@ const M = {
   radiator: new THREE.MeshStandardMaterial({ color:0xf4f4f1, roughness:.35 }),   // white lacquered (pink was the drawing's legend colour)
   dark:     new THREE.MeshStandardMaterial({ color:0x262a29, roughness:.3 }),
   steel:    new THREE.MeshStandardMaterial({ color:0xc9cecd, roughness:.35, metalness:.25 }),
-  kwhite:   new THREE.MeshPhysicalMaterial({ color:0xf7f6f2, roughness:.38, clearcoat:.25, clearcoatRoughness:.35 }),
+  kwhite:   new THREE.MeshPhysicalMaterial({ color:0xf7f6f2, roughness:.42, clearcoat:.18, clearcoatRoughness:.38 }),
   hob:      new THREE.MeshPhysicalMaterial({ color:0x090a0b, roughness:.08, clearcoat:1, clearcoatRoughness:.04, ior:1.5, envMapIntensity:1.1 }),   // black glass cooktop
   parquet:  new THREE.MeshPhysicalMaterial({ color:new THREE.Color().setRGB(.9, .85, .8, THREE.LinearSRGBColorSpace),   // bleached oak: light, low-saturation, slightly warm, subtle oiled sheen
-    roughness:.7, clearcoat:.16, clearcoatRoughness:.42, ior:1.48, map:herringboneTex(), side:THREE.DoubleSide }),
+    roughness:.7, clearcoat:.22, clearcoatRoughness:.36, ior:1.48, map:herringboneTex(), side:THREE.DoubleSide }),
   paint:    new THREE.MeshStandardMaterial({ color:0xf1eee7, roughness:.96, bumpMap:plasterTex, bumpScale:.35, envMapIntensity:.85 }),
   // polished porcelain: dielectric glaze (F0 ≈ 4 %), near-mirror gloss; reflections come from the environment map
   tundra:   new THREE.MeshPhysicalMaterial({ color:0xffffff, map:tundraTex, roughness:.075, metalness:0, ior:1.5, envMapIntensity:1.1 }),
@@ -805,7 +822,7 @@ const M = {
   tortora:  new THREE.MeshStandardMaterial({ color:0xd8ccba, roughness:.6 }),
   towel:    new THREE.MeshStandardMaterial({ color:0xf6f6f4, roughness:.35 }),
   mirror:   new THREE.MeshStandardMaterial({ color:0xeef3f5, roughness:.05, metalness:0, emissive:0x2a3236, side:THREE.DoubleSide }),
-  greige:   new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.8, map:greigeFloorTex(), side:THREE.DoubleSide }),
+  greige:   new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.76, clearcoat:.12, clearcoatRoughness:.55, map:greigeFloorTex(), side:THREE.DoubleSide }),
   travFloor:new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.6, map:travertineTexture(false), side:THREE.DoubleSide }),
   viola:    new THREE.MeshPhysicalMaterial({ color:0xffffff, roughness:.2, clearcoat:.72, clearcoatRoughness:.08, ior:1.52, envMapIntensity:1.2 }),     // kitchen gres; map set by applyGres()
   sand:     new THREE.MeshStandardMaterial({ color:0xcdc3b2, roughness:.55 }),
@@ -1006,8 +1023,13 @@ function buildWalls() {
 const GLOSS = { refl:null, u:{ tRefl:{ value:null }, rTexMat:{ value:new THREE.Matrix4() }, rInv:{ value:new THREE.Matrix4() }, rOn:{ value:0 }, rTexel:{ value:new THREE.Vector2(1 / 768, 1 / 480) } } };
 { // parquet: joints, pores and plank-to-plank differences, as relief and as sheen
   const t = M.parquet.map, r = t.userData.relief;
-  M.parquet.normalMap = reliefTex(r, t, 1.5, 2400); M.parquet.normalScale.set(.55, .55);
+  M.parquet.normalMap = reliefTex(r, t, 1.7, 2400); M.parquet.normalScale.set(.72, .72);
   M.parquet.roughnessMap = dataTex(r, t); M.parquet.roughness = .84;          // × the map (≈ 0.74…0.9): 0.62…0.76, plank by plank
+}
+{ // porcelain greige floor & travertine stone: subtle tile joints, bands and natural pores
+  M.greige.normalMap = reliefTex(M.greige.map.image, M.greige.map, 1.4, 512); M.greige.normalScale.set(.45, .45);
+  M.trav.normalMap = reliefTex(M.trav.map.image, M.trav.map, 1.3, 512); M.trav.normalScale.set(.45, .45);
+  M.travFloor.normalMap = reliefTex(M.travFloor.map.image, M.travFloor.map, 1.3, 512); M.travFloor.normalScale.set(.45, .45);
 }
 { // glazed green tiles: each one slightly pillowed and not quite flat, sunk joints — the reflections wobble from tile to tile
   const N = 512, tw = N / 12, th = N / 3; let s = 77; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
@@ -1068,7 +1090,7 @@ M.tundraGloss.customProgramCacheKey = () => 'gloss' + (GI_HOOK ? 'gi' : '');
 function dropGloss() { if (GLOSS.refl) { GLOSS.refl.dispose(); GLOSS.refl = null; } GLOSS.u.rOn.value = 0; }
 function addGloss(axis, at, a0, a1, z0, z1, dir) {        // one reflecting plane over the wall face (plan cm, absolute z)
   dropGloss(); if (z1 > CUT) return;
-  const w = (a1 - a0) * S, h = (z1 - z0) * S, rw = IS_MOBILE ? 512 : 1024, rh = IS_MOBILE ? 320 : 640;
+  const w = (a1 - a0) * S, h = (z1 - z0) * S, rw = IS_MOBILE ? 512 : 768, rh = IS_MOBILE ? 320 : 480;
   const refl = new Reflector(new THREE.PlaneGeometry(w, h), { clipBias:.003, textureWidth:rw, textureHeight:rh, multisample:0 });
   refl.material.colorWrite = false; refl.material.depthWrite = false;   // draws nothing itself: only renders the reflection
   refl.raycast = () => {}; refl.castShadow = refl.receiveShadow = false;
@@ -1106,8 +1128,8 @@ function updateGloss() {                                           // live only 
 const MIRROR_LIST = [];
 const mirrorPBR = new THREE.MeshStandardMaterial({ color:0xe4ebee, roughness:.03, metalness:1, envMapIntensity:1.1 });
 function addMirror(geo, place, parent, tag) {
-  const w = geo.parameters?.width ?? 1, h = geo.parameters?.height ?? 1, res = 1024;
-  const refl = new Reflector(geo, { clipBias:.001, textureWidth:res, textureHeight:Math.min(2048, Math.round(res * Math.max(.6, h / w))), color:0xc9cdcd, multisample:4 });
+  const w = geo.parameters?.width ?? 1, h = geo.parameters?.height ?? 1, res = IS_MOBILE ? 512 : 768;
+  const refl = new Reflector(geo, { clipBias:.001, textureWidth:res, textureHeight:Math.min(1536, Math.round(res * Math.max(.6, h / w))), color:0xc9cdcd, multisample:2 });
   const far = new THREE.Mesh(geo, M.mirror), pbr = new THREE.Mesh(geo, mirrorPBR);
   for (const o of [refl, far, pbr]) { place(o); parent.add(o); }
   refl.visible = false; pbr.visible = false;      // updateMirrors / RF switch them each frame
@@ -1166,16 +1188,29 @@ function gresMaps(g, done) {
     const slab = new THREE.Texture(land); slab.colorSpace = THREE.SRGBColorSpace; slab.anisotropy = 8; slab.needsUpdate = true;
     const tile = new THREE.Texture(img); tile.wrapS = tile.wrapT = THREE.MirroredRepeatWrapping; tile.colorSpace = THREE.SRGBColorSpace; tile.anisotropy = 8;
     tile.repeat.set(...(g.portrait ? [1 / .6, 1 / 1.097] : [1 / 1.8, 1 / .98])); tile.needsUpdate = true;
-    done(gresCache[g.id] = { slab, tile });
+    // subtle marble vein micro-relief & gloss variation (white calcite slicker, dark veins slightly more honed)
+    const mkStoneMaps = (src, like) => {
+      const c = document.createElement('canvas'); c.width = 512; c.height = 512;
+      const ctx = c.getContext('2d', { willReadFrequently:true }); ctx.drawImage(src, 0, 0, 512, 512);
+      const n = reliefTex(c, like, .55, 512);
+      const id = ctx.getImageData(0, 0, 512, 512), d = id.data;
+      for (let i = 0; i < d.length; i += 4) { const l = (.3 * d[i] + .59 * d[i + 1] + .11 * d[i + 2]) / 255; const v = Math.round((1.12 - .42 * l) * 255); d[i] = d[i + 1] = d[i + 2] = Math.max(120, Math.min(255, v)); }
+      ctx.putImageData(id, 0, 0);
+      return { n, r:dataTex(c, like) };
+    };
+    const sm = mkStoneMaps(land, slab), tm = mkStoneMaps(img, tile);
+    done(gresCache[g.id] = { slab, tile, slabN:sm.n, slabR:sm.r, tileN:tm.n, tileR:tm.r });
   };
   img.src = g.src;
 }
 const pickGres = () => GRES.find(x => x.id === CHOICE.gres) || GRES[0];
 function applyGres() {
   const g = pickGres();
-  gresMaps(g, ({ slab, tile }) => {
+  gresMaps(g, ({ slab, tile, slabN, slabR, tileN, tileR }) => {
     if (pickGres() !== g) return;                                   // a newer pick already won
-    for (const [m, t] of [[M.viola, tile], [violaSlabMat, slab]]) { m.map = t; m.roughness = g.rough; m.needsUpdate = true; }
+    for (const [m, t, n, r] of [[M.viola, tile, tileN, tileR], [violaSlabMat, slab, slabN, slabR]]) {
+      m.map = t; m.normalMap = n; m.normalScale.set(.32, .32); m.roughnessMap = r; m.roughness = g.rough; m.needsUpdate = true;
+    }
   });
 }
 function slabQuad(pts, uvs) {
@@ -1829,8 +1864,22 @@ function buildCeilings() {
   clear(G.ceilings); clear(G.hvac);
   PLAN.rooms.find(r => r.id === 'liv').h = LIV_CEIL;
   for (const r of PLAN.rooms) {               // face down: lit from below, culled when seen from above
-    // kitchen & entrance ceilings run 4 mm under the drop's living face, so the drop's own underside never shares their plane
-    const poly = (r.id === 'kit' || r.id === 'entry') ? r.poly.map(([x, y]) => [x >= 711 ? 711.4 : x, y]) : r.poly;
+    // tuck ceiling edges 1 cm into surrounding walls so hairline gaps (e.g. y = -0.1 vs 0) can never leak sky;
+    // along the kitchen/entrance drop (x = 711) keep the seam exact (4 mm under the drop face)
+    const P = r.poly, n = P.length;
+    const poly = P.map(([x, y], i) => {
+      const [px, py] = P[(i + n - 1) % n], [nx, ny] = P[(i + 1) % n];
+      const out = (ax, ay, bx, by) => {
+        const L = Math.hypot(bx - ax, by - ay) || 1; let ox = -(by - ay) / L, oy = (bx - ax) / L;
+        if (inPoly([(ax + bx) / 2 + ox * 3, (ay + by) / 2 + oy * 3], P)) { ox = -ox; oy = -oy; }
+        return [ox, oy];
+      };
+      const [o1x, o1y] = out(px, py, x, y), [o2x, o2y] = out(x, y, nx, ny);
+      let tx = x + o1x + o2x, ty = y + o1y + o2y;
+      if ((r.id === 'kit' || r.id === 'entry') && x >= 711) tx = 711.4;
+      if (r.id === 'liv' && x <= 711) tx = 710.5;
+      return [tx, ty];
+    });
     const g = new THREE.ShapeGeometry(shapeOf(poly)); g.rotateX(Math.PI / 2); g.scale(1, 1, -1); g.computeVertexNormals();
     const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const k = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = k; }
     g.computeVertexNormals();
@@ -2144,6 +2193,7 @@ function piping(pts, mat, closed = true, parent = G.furniture) {
   const P = closed ? [...pts, pts[0]] : pts, path = new THREE.CurvePath();
   for (let i = 0; i < P.length - 1; i++) path.add(new THREE.LineCurve3(P[i], P[i + 1]));
   const m = new THREE.Mesh(new THREE.TubeGeometry(path, (P.length - 1) * 24, mat === FM.pipeWhite ? .006 : .0045, 8, false), mat);   // contrast piping a touch fuller
+  m.castShadow = m.receiveShadow = true;
   parent.add(m); return m;
 }
 function feet(x0, x1, y0, y1, h) {                                // four small dark feet just inside the corners
@@ -2997,16 +3047,14 @@ function measureClick() {
 }
 function measureReset() { MS.a = MS.b = MS.aim = null; aimDot.visible = false; measureDraw(); setVis('mread', false); syncClear(); }
 function syncClear() { const b = document.getElementById('walk-clear'); if (b) b.hidden = !(touchWalk && MS.a); }
-let mTick = 0;
 function measureFrame() {
-  if (mode !== 'walk') { aimDot.visible = false; return; }
-  if ((mTick++ & 3) !== 0) return;
+  if (mode !== 'walk' || !MS.a || MS.b) { aimDot.visible = false; $('mread').hidden = true; return; }
   const s = snapAim();
   MS.aim = s ? s.p : null;
   aimDot.visible = !!s; if (s) { aimDot.position.copy(s.p); aimDot.material.color.setHex(s.snapped ? 0x16a34a : 0xc2410c); aimDot.scale.setScalar(s.snapped ? 1.4 : .8); }
-  if (MS.a && !MS.b) { measureDraw(); }
+  measureDraw();
   const r = $('mread');
-  if (MS.a && !MS.b && MS.aim) { r.textContent = fmtCm(MS.a.distanceTo(MS.aim)); r.hidden = false; } else r.hidden = true;
+  if (MS.aim) { r.textContent = fmtCm(MS.a.distanceTo(MS.aim)); r.hidden = false; } else r.hidden = true;
 }
 renderer.domElement.addEventListener('contextmenu', e => { if (mode === 'walk') e.preventDefault(); });
 document.addEventListener('mousedown', e => {
@@ -3238,22 +3286,35 @@ renderer.domElement.addEventListener('pointerup', e => {
 /* ===================== quality: GTAO, sun through the windows, sky ===================== */
 // the composer draws into its own target, so the canvas' antialias does not apply: give it 4× MSAA, otherwise
 // thin edges (soffit, cornices, door frames) break into jagged teeth in Alta qualità
-const COMPOSER_DPR = Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2);
+const COMPOSER_DPR = Math.min(devicePixelRatio, IS_MOBILE ? 1.25 : 1.5);
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type:THREE.HalfFloatType, samples:4 }));
-composer.setPixelRatio(COMPOSER_DPR);   // crisp native HiDPI render; GTAO scales separately below to stay fast
+composer.setPixelRatio(COMPOSER_DPR);   // crisp HiDPI + 4× MSAA balanced for steady 60 FPS
 const renderPass = new RenderPass(scene, persp);
 const gtao = new GTAOPass(scene, persp, 800, 600);
-gtao.updateGtaoMaterial({ radius:.28, distanceExponent:1.25, thickness:.72, scale:1, samples:IS_MOBILE ? 10 : 16 });
+gtao.updateGtaoMaterial({ radius:.35, distanceExponent:1.4, thickness:.85, scale:1, samples:IS_MOBILE ? 8 : 12 });
 gtao.updatePdMaterial({ lumaPhi:10, depthPhi:2, normalPhi:3, radius:4.5, rings:2, samples:8 });
-gtao.blendIntensity = .84;
+gtao.blendIntensity = .90;
 gtao.normalMaterial.side = THREE.DoubleSide;   // otherwise mirrored cornice runs vanish from the AO depth pass → blotchy patches
 { const orig = gtao.setSize.bind(gtao);
   gtao.setSize = (w, h) => {
-    const k = Math.min(1, (IS_MOBILE ? 1 : 1.3) / COMPOSER_DPR);
+    const k = IS_MOBILE ? .5 : .55;   // half-res AO + Poisson denoise = rich contact shadows at ~3× lower GPU cost
     orig(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
   }; }
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .08, .5, 1.3);
-composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bloom); composer.addPass(new OutputPass());
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .05, .48, 1.55);
+const outputPass = new OutputPass();
+outputPass.uniforms.uLens = { value:0 };
+outputPass.material.fragmentShader = outputPass.material.fragmentShader
+  .replace('uniform sampler2D tDiffuse;', 'uniform sampler2D tDiffuse;\nuniform float uLens;')
+  .replace('#ifdef SRGB_TRANSFER', `
+    if (uLens > 0.01) {
+      vec2 vc = vUv * 2.0 - 1.0;
+      gl_FragColor.rgb *= 1.0 - 0.12 * dot(vc, vc) * uLens;
+      float gn = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+      gl_FragColor.rgb += gn * (0.004 * uLens);
+    }
+    #ifdef SRGB_TRANSFER`);
+outputPass.material.needsUpdate = true;
+composer.addPass(renderPass); composer.addPass(gtao); composer.addPass(bloom); composer.addPass(outputPass);
 // invisible lid over the flat: blocks the sun from above so light only enters through the windows
 for (const m of [M.wall, M.cap, M.bedWall]) m.shadowSide = THREE.BackSide;
 const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(shapeOf(PLAN.slabPoly), { depth:.3, bevelEnabled:false }).rotateX(-Math.PI / 2),
@@ -3268,11 +3329,57 @@ roof.raycast = () => {};
 }
 { const ov = gtao.overrideVisibility.bind(gtao), rv = gtao.restoreVisibility.bind(gtao); let was = false;
   let gw = false;
-  gtao.overrideVisibility = () => { ov(); was = roof.visible; roof.visible = false; if (GLOSS.refl) { gw = GLOSS.refl.visible; GLOSS.refl.visible = false; } };
-  gtao.restoreVisibility = () => { rv(); roof.visible = was; if (GLOSS.refl) GLOSS.refl.visible = gw; }; }
+  gtao.overrideVisibility = () => { ov(); was = roof.visible; roof.visible = false; cityBackdrop.visible = false; if (GLOSS.refl) { gw = GLOSS.refl.visible; GLOSS.refl.visible = false; } };
+  gtao.restoreVisibility = () => { rv(); roof.visible = was; cityBackdrop.visible = INSIDE; if (GLOSS.refl) GLOSS.refl.visible = gw; }; }
 const sky = new Sky(); sky.scale.setScalar(45); scene.add(sky);
 Object.assign(sky.material.uniforms.turbidity, { value:4 }); sky.material.uniforms.rayleigh.value = 1.2;
 sky.material.uniforms.mieCoefficient.value = .004; sky.material.uniforms.mieDirectionalG.value = .8;
+// Soft Bologna historic-centre skyline outside the windows (1 draw call, visible only in Cammina; excluded from GI/AO/raycasts)
+const cityBackdrop = (() => {
+  const W = 2048, H = 512, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'); let s = 41; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const day = g.createLinearGradient(0, H * .48, 0, H);
+  day.addColorStop(0, 'rgba(214,205,194,0)'); day.addColorStop(.22, 'rgba(202,190,176,.85)'); day.addColorStop(1, 'rgba(136,126,115,1)');
+  g.fillStyle = day; g.fillRect(0, H * .48, W, H * .52);
+  // distant soft Bologna terracotta / ochre facades across the street
+  const cols = ['#d8b89a', '#cfa483', '#dfc7ad', '#c89372', '#d4baa2', '#c58f6e'];
+  for (let x = 0; x < W;) {
+    const bw = 55 + Math.round(rnd() * 95), top = Math.round(H * (.40 + rnd() * .16)), col = cols[Math.floor(rnd() * cols.length)];
+    g.fillStyle = col; g.fillRect(x, top, bw - 2, H - top);
+    // terracotta roofline & eaves shadow
+    g.fillStyle = '#9c5a42'; g.fillRect(x - 1, top - 10, bw, 11);
+    g.fillStyle = 'rgba(55,35,25,.24)'; g.fillRect(x, top + 1, bw - 2, 6);
+    // shuttered windows in neat rows
+    const colsN = Math.max(2, Math.floor((bw - 14) / 22));
+    for (let r = 0; r < 4; r++) {
+      const wy = top + 18 + r * 44; if (wy > H - 24) break;
+      for (let k = 0; k < colsN; k++) {
+        const wx0 = x + 8 + k * ((bw - 18) / colsN);
+        g.fillStyle = 'rgba(72,62,56,.52)'; g.fillRect(wx0, wy, 10, 20);
+        g.fillStyle = 'rgba(84,100,82,.42)'; g.fillRect(wx0 - 4, wy, 3.5, 20); g.fillRect(wx0 + 10.5, wy, 3.5, 20);
+      }
+    }
+    x += bw;
+  }
+  // soft courtyard tree canopy along the lower edge
+  for (let i = 0; i < 42; i++) {
+    const tx = rnd() * W, ty = H * (.76 + rnd() * .16), tr = 22 + rnd() * 34;
+    const gr = g.createRadialGradient(tx, ty, 4, tx, ty, tr);
+    gr.addColorStop(0, `rgba(${78 + Math.round(rnd() * 25)},${98 + Math.round(rnd() * 22)},${72 + Math.round(rnd() * 18)},.75)`);
+    gr.addColorStop(1, 'rgba(76,92,68,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(tx, ty, tr, 0, Math.PI * 2); g.fill();
+  }
+  // subtle atmospheric distance haze (softens the backdrop like a real sunlit exterior outside a window)
+  const haze = g.createLinearGradient(0, H * .36, 0, H);
+  haze.addColorStop(0, 'rgba(232,238,244,0)'); haze.addColorStop(.35, 'rgba(232,236,240,.34)'); haze.addColorStop(1, 'rgba(218,220,222,.22)');
+  g.fillStyle = haze; g.fillRect(0, H * .36, W, H * .64);
+  const tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace; tx.wrapS = THREE.RepeatWrapping; tx.anisotropy = 4;
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(28, 28, 22, 48, 1, true),
+    new THREE.MeshBasicMaterial({ map:tx, side:THREE.BackSide, transparent:true, depthWrite:false, fog:false }));
+  m.position.y = 2.6; m.visible = false; m.frustumCulled = false; m.raycast = () => {};
+  scene.add(m);
+  return m;
+})();
 function sunDir(t) {          // drawing north taken as real north: morning sun from the east (living windows), evening from the west
   const az = THREE.MathUtils.degToRad(70 + 220 * t), el = THREE.MathUtils.degToRad(10 + 38 * Math.sin(Math.PI * t));
   return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
@@ -3291,7 +3398,7 @@ function sunLabel(t) { const m = Math.round((7 + 12 * t) * 4) / 4, h = Math.floo
 const _sunC = new THREE.Color();
 function sunLight(d) { return { intensity:NIGHT ? 0 : 6 + 3 * d.y, color:_sunC.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y) }; }
 const GI = (() => {
-  const cfg = IS_MOBILE ? { step:.5, ny:6, rw:8, rh:8, dt:10, iters:44 } : { step:.4, ny:7, rw:14, rh:10, dt:16, iters:64 };
+  const cfg = IS_MOBILE ? { step:.5, ny:6, rw:8, rh:8, dt:10, iters:44 } : { step:.4, ny:7, rw:12, rh:8, dt:16, iters:60 };
   Object.assign(cfg, { expK:5, lRef:.08, expP:.75, wb:.6, tooSlow:160 });   // exposure expK where a white wall would read lRef; how far it and the white balance adapt; ms a round may take
   const st = { on:false, failed:!renderer.capabilities.isWebGL2, exposure:8, cfg, n:0, todo:0, tris:0, ms:0, rev:0 };
   const X0 = -40, Y0 = -46, X1 = 1104, Y1 = 903, H0 = .3, H1 = 2.92;    // plan cm / metres: the flat including its outer walls
@@ -3625,7 +3732,7 @@ const GI = (() => {
     let acc = 0, cnt = 0;
     for (let i = 0; i < buf.length; i += 4) if (buf[i + 1] > 127 && buf[i] > 0) { acc += Math.pow(2, buf[i] / 255 * 20 - 14); cnt++; }
     if (cnt < w * nz * .03) throw new Error('no usable probes');
-    probes = buf; const amb = .15 * acc / cnt; GIU.giAmb.value.set(amb, amb, amb);   // where no probe reaches (inside furniture): dim
+    probes = buf; const amb = .03 * acc / cnt; GIU.giAmb.value.set(amb, amb, amb);   // where no probe reaches (inside furniture): dim
   }
   // light around a point, from the probes next to it → out = [irradiance, red / green, blue / green]; false where there are none
   function level(p, out = []) {
@@ -3665,7 +3772,7 @@ const GI = (() => {
         if (st.cost === undefined && st.n >= 2) {   // once, after the start-up rounds: what a round costs on this GPU
           st.cost = Math.round(Math.min(timed(), timed()));
           if (st.cost > cfg.tooSlow) throw new Error('too slow, ' + st.cost + ' ms a round');
-          every = st.cost > 60 ? 3 : st.cost > 25 ? 2 : 1;   // a slower GPU spreads the rounds out, to keep moving smooth
+          every = st.cost > 22 ? 3 : st.cost > 12 ? 2 : 1;   // keep 60 FPS smooth while GI settles in the background
         } else round();
       }
       if (st.on && INSIDE) { expose(dt); renderer.toneMappingExposure = st.exposure * AGX_GAIN; }
@@ -3717,7 +3824,7 @@ function applyQuality(rebuild = true) {
   sun.color.setHSL(.09, .6 - .35 * d.y, .78 + .12 * d.y);
   hemi.intensity = .5; renderer.toneMappingExposure = 1.12;
   sky.material.uniforms.sunPosition.value.copy(d);
-  sun.shadow.normalBias = .03; sun.shadow.bias = -.0005;
+  sun.shadow.normalBias = .03; sun.shadow.bias = -.0008;
   applyLight();
   $('sun-row').hidden = NIGHT; $('sun').value = Math.round(SUN_T * 100); $('sun-lbl').textContent = sunLabel(SUN_T);
   renderer.shadowMap.needsUpdate = true;
@@ -3822,7 +3929,7 @@ const RF = (() => {
       _keep.length = 0;
       const hide = (o, v = false) => { if (o && o.visible !== v) { _keep.push([o, o.visible]); o.visible = v; } };
       for (const e of MIRROR_LIST) { hide(e.refl); hide(e.far); hide(e.pbr, true); }   // mirrors: plain metal, reflecting the previous picture
-      hide(GLOSS.refl); hide(G.planLines); hide(G.grid); hide(G.labels); hide(sky); hide(nightSky); hide(lampHitG);
+      hide(GLOSS.refl); hide(G.planLines); hide(G.grid); hide(G.labels); hide(sky); hide(nightSky); hide(cityBackdrop); hide(lampHitG);
       if (typeof aimDot !== 'undefined') hide(aimDot); if (typeof mGroup !== 'undefined') hide(mGroup);
       scene.add(capSky);
       _keep.tint = GIU.giTint.value.clone(); _keep.sun = sun.color.clone(); _keep.rOn = GLOSS.u.rOn.value;
@@ -4096,8 +4203,8 @@ const nightSky = new THREE.Mesh(new THREE.SphereGeometry(44, 32, 16), new THREE.
     }` }));
 nightSky.visible = false; nightSky.frustumCulled = false; nightSky.raycast = () => {}; scene.add(nightSky);
 function skyLevel() {                              // the sky as the probes and the reflections see it
-  if (NIGHT) { GIU.giSkyT.value.setRGB(.004, .007, .017); GIU.giSkyB.value.setRGB(.014, .012, .01); GIU.giFloor.value = .002; }   // deep blue above, a trace of the city's glow low down
-  else { GIU.giSkyT.value.set(0xcfe0f2).multiplyScalar(2.8); GIU.giSkyB.value.set(0xe8dcc6).multiplyScalar(2.8); GIU.giFloor.value = .008; }
+  if (NIGHT) { GIU.giSkyT.value.setRGB(.004, .007, .017); GIU.giSkyB.value.setRGB(.014, .012, .01); GIU.giFloor.value = .0006; }   // deep blue above, a trace of the city's glow low down
+  else { GIU.giSkyT.value.set(0xcfe0f2).multiplyScalar(2.8); GIU.giSkyB.value.set(0xe8dcc6).multiplyScalar(2.8); GIU.giFloor.value = .0018; }
 }
 // Slim flat round white LED ceiling lights (Ø 14 × h 2.2 cm) across the central false-ceiling block:
 // entrance, kitchen, bathrooms, laundry and hallway. Always present on the ceilings, lit and clickable by night.
@@ -4215,13 +4322,21 @@ renderer.setAnimationLoop(() => {
     renderer.toneMapping = tm === THREE.AgXToneMapping ? THREE.ACESFilmicToneMapping : THREE.AgXToneMapping;
     try { renderer.compileAsync(scene, persp).catch(() => {}); } catch {} renderer.toneMapping = tm; }
   NL.frame(); GI.frame(dt); RF.frame();
-  sky.visible = INSIDE && !NIGHT; nightSky.visible = INSIDE && NIGHT; nightEdges(); nightBackground();
+  sky.visible = INSIDE && !NIGHT; nightSky.visible = INSIDE && NIGHT;
+  cityBackdrop.visible = INSIDE;
+  if (INSIDE) {
+    const exp = Math.max(renderer.toneMappingExposure, .5);
+    // keep exterior buildings balanced against indoor exposure (bright warm sunlit facades by day, dim moody silhouette by night)
+    cityBackdrop.material.color.setHex(NIGHT ? 0x1e2538 : 0xfff8ef).multiplyScalar((NIGHT ? .14 : 1.15) / exp);
+  }
+  nightEdges(); nightBackground();
   if (INSIDE && GI.failed && renderer.shadowMap.needsUpdate) windowShadowPass();
   if (cam === persp) {
     const exp = Math.max(renderer.toneMappingExposure, .5);
-    bloom.threshold = (NIGHT ? 1.45 : 1.3) / exp;
-    bloom.strength = NIGHT ? (INSIDE ? .14 : .11) : (INSIDE ? .08 : .035);
-    bloom.radius = NIGHT ? .62 : .48;
+    bloom.threshold = (NIGHT ? 1.65 : 1.55) / exp;
+    bloom.strength = NIGHT ? (INSIDE ? .12 : .09) : (INSIDE ? .05 : .025);
+    bloom.radius = NIGHT ? .58 : .45;
+    outputPass.uniforms.uLens.value = INSIDE ? 1 : 0;
     composer.render();
   } else renderer.render(scene, cam);
   labelRenderer.render(scene, cam);
